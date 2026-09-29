@@ -1,0 +1,725 @@
+-- Wafer Hub v1 Compiled Executor Loader
+loadstring([[
+repeat task.wait() until game:IsLoaded()
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local cloneref = cloneref or function(v) return v end
+local player = Players.LocalPlayer
+local Char = player.Character or player.CharacterAdded:Wait()
+
+if player:WaitForChild("PlayerGui"):FindFirstChild("WaferHubLightGui") then
+    player.PlayerGui.WaferHubLightGui:Destroy()
+end
+if player:WaitForChild("PlayerGui"):FindFirstChild("WaferPullGui") then
+    player.PlayerGui.WaferPullGui:Destroy()
+end
+
+getgenv().MagsActivated = false
+getgenv().MagsRange = 10
+getgenv().ShowHitbox = false
+getgenv().SpeedEnabled = false
+getgenv().SpeedValue = 1
+getgenv().JumpPowerOn = false
+getgenv().JumpBoost = 50
+getgenv().PullEnabled = false
+getgenv().PullPower = 10
+getgenv().ClickTackleEnabled = false
+getgenv().ClickTackleRange = 15
+getgenv().ClickTackleKey = Enum.KeyCode.X
+getgenv().MenuKey = Enum.KeyCode.LeftControl
+
+local hitboxes = {}
+local movementLoop = nil
+local pullButtonHeld = false
+local clickTackleConnection = nil
+
+local COLOR_BG = Color3.fromRGB(242, 247, 252)
+local COLOR_HEADER = Color3.fromRGB(225, 236, 248)
+local COLOR_CARD = Color3.fromRGB(255, 255, 255)
+local COLOR_STROKE = Color3.fromRGB(195, 218, 242)
+local COLOR_BABY_BLUE = Color3.fromRGB(85, 175, 240)
+local COLOR_BABY_BLUE_DARK = Color3.fromRGB(50, 140, 210)
+local COLOR_TEXT_MAIN = Color3.fromRGB(25, 40, 60)
+local COLOR_TEXT_MUTED = Color3.fromRGB(100, 120, 145)
+
+local pullButtonGui = Instance.new("ScreenGui")
+pullButtonGui.Name = "WaferPullGui"
+pullButtonGui.ResetOnSpawn = false
+pullButtonGui.Parent = player:WaitForChild("PlayerGui")
+
+local pullContainer = Instance.new("Frame")
+pullContainer.Name = "PullContainer"
+pullContainer.Size = UDim2.new(0, 80, 0, 80)
+pullContainer.Position = UDim2.new(0.85, 0, 0.7, 0)
+pullContainer.BackgroundTransparency = 1
+pullContainer.Active = true
+pullContainer.Draggable = true
+pullContainer.Parent = pullButtonGui
+
+local pullButton = Instance.new("TextButton")
+pullButton.Size = UDim2.new(0, 70, 0, 70)
+pullButton.Position = UDim2.new(0, 5, 0, 5)
+pullButton.BackgroundColor3 = COLOR_BABY_BLUE
+pullButton.BorderSizePixel = 0
+pullButton.Text = "PULL"
+pullButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+pullButton.Font = Enum.Font.GothamBold
+pullButton.TextSize = 16
+pullButton.Parent = pullContainer
+pullButton.Visible = false
+pullButton.AutoButtonColor = false
+
+local pullCorner = Instance.new("UICorner")
+pullCorner.CornerRadius = UDim.new(1, 0)
+pullCorner.Parent = pullButton
+
+local pullStroke = Instance.new("UIStroke")
+pullStroke.Color = COLOR_STROKE
+pullStroke.Thickness = 2
+pullStroke.Parent = pullButton
+
+local function hitboxx(oid)
+    if not oid or hitboxes[oid] or not getgenv().MagsActivated or not getgenv().ShowHitbox then return end
+    local holder = oid:FindFirstAncestorOfClass("Model")
+    if holder and Players:GetPlayerFromCharacter(holder) then return end
+    
+    local hitbox = Instance.new("Part")
+    hitbox.Name = "WaferHitbox"
+    hitbox.Size = Vector3.new(getgenv().MagsRange, getgenv().MagsRange, getgenv().MagsRange)
+    hitbox.Anchored = true
+    hitbox.CanCollide = false
+    hitbox.Transparency = 0.35
+    hitbox.Material = Enum.Material.ForceField
+    hitbox.Color = COLOR_BABY_BLUE
+    hitbox.CastShadow = false
+    hitbox.CFrame = oid.CFrame
+    hitbox.Shape = Enum.PartType.Ball
+    hitbox.Parent = oid
+    
+    hitboxes[oid] = {part = hitbox}
+    
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        if not oid or not oid.Parent or not getgenv().MagsActivated or not getgenv().ShowHitbox then
+            if hitbox then hitbox:Destroy() end
+            if connection then connection:Disconnect() end
+            hitboxes[oid] = nil
+            return
+        end
+        local holder = oid:FindFirstAncestorOfClass("Model")
+        if holder and Players:GetPlayerFromCharacter(holder) then
+            if hitbox then hitbox:Destroy() end
+            if connection then connection:Disconnect() end
+            hitboxes[oid] = nil
+            return
+        end
+        hitbox.CFrame = oid.CFrame
+        hitbox.Size = Vector3.new(getgenv().MagsRange, getgenv().MagsRange, getgenv().MagsRange)
+    end)
+end
+
+local function removeHitboxes()
+    for oid, data in pairs(hitboxes) do
+        if data.part then data.part:Destroy() end
+    end
+    hitboxes = {}
+end
+
+local function footballhitbox()
+    if not getgenv().MagsActivated or not getgenv().ShowHitbox then return end
+    for _, child in pairs(workspace:GetChildren()) do
+        if child.Name == "Football" and child:IsA("BasePart") then
+            hitboxx(child)
+        end
+    end
+end
+
+local function startMovementSystem()
+    if not movementLoop then
+        movementLoop = RunService.Heartbeat:Connect(function(dt)
+            if not getgenv().SpeedEnabled then return end
+            local character = player.Character
+            if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+            local hrp = character.HumanoidRootPart
+            local humanoid = character:FindFirstChild("Humanoid")
+            if humanoid and humanoid.MoveDirection.Magnitude > 0 then
+                local spd = getgenv().SpeedValue or 1
+                local speedStudsPerSec = spd * 8
+                local moveVector = humanoid.MoveDirection * speedStudsPerSec * dt
+                hrp.CFrame = hrp.CFrame + moveVector
+            end
+        end)
+    end
+end
+
+local function stopMovementSystem()
+    if movementLoop then
+        movementLoop:Disconnect()
+        movementLoop = nil
+    end
+end
+
+local function whenmoving(character)
+    if not character then return end
+    local humanoid = character:WaitForChild("Humanoid")
+    local humanoidrootpart = character:WaitForChild("HumanoidRootPart")
+    humanoid.StateChanged:Connect(function(_, newstate)
+        if newstate == Enum.HumanoidStateType.Jumping and getgenv().JumpPowerOn then
+            task.wait(0.05)
+            local boost = getgenv().JumpBoost or 50
+            humanoidrootpart.AssemblyLinearVelocity = humanoidrootpart.AssemblyLinearVelocity + Vector3.new(0, boost - 50, 0)
+        end
+    end)
+end
+
+local function findClosestBallCarrier(maxDistance)
+    local character = player.Character
+    if not character then return nil end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    
+    local closestDistance = maxDistance
+    local closestCharacter = nil
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr == player then continue end
+        local targetChar = plr.Character
+        if not targetChar then continue end
+        local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
+        if not targetHrp then continue end
+        
+        local hasFootball = targetChar:FindFirstChild("Football") ~= nil
+        if not hasFootball then
+            for _, item in ipairs(targetChar:GetChildren()) do
+                if item:IsA("Tool") and (item.Name == "Football" or item.Name:match("Football")) then
+                    hasFootball = true
+                    break
+                end
+                if item:IsA("BasePart") and item.Name == "Football" then
+                    hasFootball = true
+                    break
+                end
+            end
+        end
+        if not hasFootball then continue end
+        
+        local distance = (hrp.Position - targetHrp.Position).Magnitude
+        if distance < closestDistance then
+            closestDistance = distance
+            closestCharacter = targetChar
+        end
+    end
+    return closestCharacter
+end
+
+local function enableClickTackle()
+    if clickTackleConnection then return end
+    clickTackleConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        local isKeyTrigger = (input.KeyCode == getgenv().ClickTackleKey and getgenv().ClickTackleKey ~= Enum.KeyCode.Unknown)
+        local isClickTrigger = (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch)
+        
+        if isKeyTrigger or isClickTrigger then
+            local targetChar = findClosestBallCarrier(getgenv().ClickTackleRange)
+            if targetChar and targetChar:FindFirstChild("HumanoidRootPart") then
+                local character = player.Character
+                if character and character:FindFirstChild("HumanoidRootPart") then
+                    character.HumanoidRootPart.CFrame = targetChar.HumanoidRootPart.CFrame
+                end
+            end
+        end
+    end)
+end
+
+local function disableClickTackle()
+    if clickTackleConnection then
+        clickTackleConnection:Disconnect()
+        clickTackleConnection = nil
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    if not getgenv().MagsActivated then return end
+    if getgenv().ShowHitbox then footballhitbox() end
+    
+    for _, v in next, workspace:GetChildren() do
+        if v.Name == "Football" then
+            v.CanCollide = false
+            local character = player.Character
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                local hrp = character.HumanoidRootPart
+                local range = getgenv().MagsRange or 10
+                local dist = (v.Position - hrp.Position).Magnitude
+                if dist <= range then
+                    v.CFrame = hrp.CFrame
+                    firetouchinterest(hrp, v, 0)
+                    firetouchinterest(hrp, v, 0)
+                end
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(0.05) do
+        if getgenv().PullEnabled and pullButtonHeld then
+            local character = player.Character
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                local hrp = character.HumanoidRootPart
+                local target = workspace:FindFirstChild("Football")
+                if target and target:IsA("BasePart") then
+                    local diff = target.Position - hrp.Position
+                    if diff.Magnitude > 0.1 then
+                        local direction = diff.Unit
+                        local power = getgenv().PullPower or 10
+                        hrp.Velocity = direction * power * 5
+                    end
+                end
+            end
+        end
+    end
+end)
+
+pullButton.MouseButton1Down:Connect(function()
+    if getgenv().PullEnabled then
+        pullButtonHeld = true
+        pullButton.BackgroundColor3 = COLOR_BABY_BLUE_DARK
+    end
+end)
+pullButton.MouseButton1Up:Connect(function()
+    pullButtonHeld = false
+    pullButton.BackgroundColor3 = COLOR_BABY_BLUE
+end)
+
+if player.Character then whenmoving(player.Character) end
+player.CharacterAdded:Connect(whenmoving)
+
+local mainGui = Instance.new("ScreenGui")
+mainGui.Name = "WaferHubLightGui"
+mainGui.ResetOnSpawn = false
+mainGui.Parent = player:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 520, 0, 380)
+mainFrame.Position = UDim2.new(0.5, -260, 0.5, -190)
+mainFrame.BackgroundColor3 = COLOR_BG
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = mainGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 16)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = COLOR_STROKE
+mainStroke.Thickness = 2
+mainStroke.Parent = mainFrame
+
+local header = Instance.new("Frame")
+header.Name = "Header"
+header.Size = UDim2.new(1, 0, 0, 50)
+header.BackgroundColor3 = COLOR_HEADER
+header.BorderSizePixel = 0
+header.Parent = mainFrame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 16)
+headerCorner.Parent = header
+
+local logoTitle = Instance.new("TextLabel")
+logoTitle.Size = UDim2.new(0, 200, 1, 0)
+logoTitle.Position = UDim2.new(0, 18, 0, 0)
+logoTitle.BackgroundTransparency = 1
+logoTitle.Text = "Wafer Hub"
+logoTitle.TextColor3 = COLOR_BABY_BLUE_DARK
+logoTitle.Font = Enum.Font.FredokaOne
+logoTitle.TextSize = 22
+logoTitle.TextXAlignment = Enum.TextXAlignment.Left
+logoTitle.Parent = header
+
+local versionTag = Instance.new("TextLabel")
+versionTag.Size = UDim2.new(0, 90, 0, 24)
+versionTag.Position = UDim2.new(1, -110, 0.5, -12)
+versionTag.BackgroundColor3 = COLOR_CARD
+versionTag.Text = "Football v1"
+versionTag.TextColor3 = COLOR_BABY_BLUE
+versionTag.Font = Enum.Font.GothamBold
+versionTag.TextSize = 11
+versionTag.Parent = header
+
+local tagCorner = Instance.new("UICorner")
+tagCorner.CornerRadius = UDim.new(0, 12)
+tagCorner.Parent = versionTag
+
+local tagStroke = Instance.new("UIStroke")
+tagStroke.Color = COLOR_STROKE
+tagStroke.Thickness = 1
+tagStroke.Parent = versionTag
+
+local navBar = Instance.new("Frame")
+navBar.Name = "NavBar"
+navBar.Size = UDim2.new(1, -32, 0, 38)
+navBar.Position = UDim2.new(0, 16, 0, 60)
+navBar.BackgroundColor3 = COLOR_HEADER
+navBar.BorderSizePixel = 0
+navBar.Parent = mainFrame
+
+local navCorner = Instance.new("UICorner")
+navCorner.CornerRadius = UDim.new(0, 10)
+navCorner.Parent = navBar
+
+local navLayout = Instance.new("UIListLayout")
+navLayout.FillDirection = Enum.FillDirection.Horizontal
+navLayout.Padding = UDim.new(0, 4)
+navLayout.SortOrder = Enum.SortOrder.LayoutOrder
+navLayout.Parent = navBar
+
+local navPadding = Instance.new("UIPadding")
+navPadding.PaddingTop = UDim.new(0, 4)
+navPadding.PaddingBottom = UDim.new(0, 4)
+navPadding.PaddingLeft = UDim.new(0, 4)
+navPadding.PaddingRight = UDim.new(0, 4)
+navPadding.Parent = navBar
+
+local content = Instance.new("Frame")
+content.Name = "Content"
+content.Size = UDim2.new(1, -32, 1, -114)
+content.Position = UDim2.new(0, 16, 0, 106)
+content.BackgroundTransparency = 1
+content.Parent = mainFrame
+
+local tabs = {}
+
+local function switchTab(tabBtn, tabContainer)
+    for _, t in pairs(tabs) do
+        t.Btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        t.Btn.BackgroundTransparency = 1
+        t.Btn.TextColor3 = COLOR_TEXT_MUTED
+        t.Page.Visible = false
+    end
+    tabBtn.BackgroundColor3 = COLOR_CARD
+    tabBtn.BackgroundTransparency = 0
+    tabBtn.TextColor3 = COLOR_BABY_BLUE_DARK
+    tabContainer.Visible = true
+end
+
+local function createTab(name)
+    local page = Instance.new("ScrollingFrame")
+    page.Name = name .. "Page"
+    page.Size = UDim2.new(1, 0, 1, 0)
+    page.BackgroundTransparency = 1
+    page.ScrollBarThickness = 4
+    page.ScrollBarImageColor3 = COLOR_BABY_BLUE
+    page.Visible = false
+    page.Parent = content
+
+    local pageLayout = Instance.new("UIListLayout")
+    pageLayout.Padding = UDim.new(0, 12)
+    pageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    pageLayout.Parent = page
+
+    local pagePad = Instance.new("UIPadding")
+    pagePad.PaddingRight = UDim.new(0, 6)
+    pagePad.Parent = page
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0.33, -3, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.BackgroundColor3 = COLOR_CARD
+    btn.Text = name
+    btn.TextColor3 = COLOR_TEXT_MUTED
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.AutoButtonColor = false
+    btn.Parent = navBar
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = btn
+
+    btn.MouseButton1Click:Connect(function()
+        switchTab(btn, page)
+    end)
+
+    tabs[name] = {Btn = btn, Page = page}
+    return page
+end
+
+local function createCard(parent, titleText)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, 0, 0, 30)
+    card.AutomaticSize = Enum.AutomaticSize.Y
+    card.BackgroundColor3 = COLOR_CARD
+    card.BorderSizePixel = 0
+    card.Parent = parent
+
+    local cardCorner = Instance.new("UICorner")
+    cardCorner.CornerRadius = UDim.new(0, 12)
+    cardCorner.Parent = card
+
+    local cardStroke = Instance.new("UIStroke")
+    cardStroke.Color = COLOR_STROKE
+    cardStroke.Thickness = 1
+    cardStroke.Parent = card
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -20, 0, 26)
+    title.Position = UDim2.new(0, 12, 0, 6)
+    title.BackgroundTransparency = 1
+    title.Text = titleText
+    title.TextColor3 = COLOR_BABY_BLUE_DARK
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = card
+
+    local list = Instance.new("UIListLayout")
+    list.Padding = UDim.new(0, 10)
+    list.SortOrder = Enum.SortOrder.LayoutOrder
+    list.Parent = card
+
+    local pad = Instance.new("UIPadding")
+    pad.PaddingTop = UDim.new(0, 36)
+    pad.PaddingBottom = UDim.new(0, 12)
+    pad.PaddingLeft = UDim.new(0, 12)
+    pad.PaddingRight = UDim.new(0, 12)
+    pad.Parent = card
+
+    return card
+end
+
+local function addToggle(card, text, defaultState, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 26)
+    row.BackgroundTransparency = 1
+    row.Parent = card
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.7, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = COLOR_TEXT_MAIN
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 13
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local switch = Instance.new("TextButton")
+    switch.Size = UDim2.new(0, 44, 0, 24)
+    switch.Position = UDim2.new(1, -44, 0.5, -12)
+    switch.BackgroundColor3 = defaultState and COLOR_BABY_BLUE or Color3.fromRGB(210, 222, 235)
+    switch.Text = ""
+    switch.AutoButtonColor = false
+    switch.Parent = row
+
+    local switchCorner = Instance.new("UICorner")
+    switchCorner.CornerRadius = UDim.new(1, 0)
+    switchCorner.Parent = switch
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 18, 0, 18)
+    knob.Position = defaultState and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BorderSizePixel = 0
+    knob.Parent = switch
+
+    local knobCorner = Instance.new("UICorner")
+    knobCorner.CornerRadius = UDim.new(1, 0)
+    knobCorner.Parent = knob
+
+    local state = defaultState
+    switch.MouseButton1Click:Connect(function()
+        state = not state
+        TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = state and COLOR_BABY_BLUE or Color3.fromRGB(210, 222, 235)}):Play()
+        TweenService:Create(knob, TweenInfo.new(0.2), {Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)}):Play()
+        callback(state)
+    end)
+end
+
+local function addSlider(card, text, min, max, default, callback)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, 0, 0, 44)
+    row.BackgroundTransparency = 1
+    row.Parent = card
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.7, 0, 0, 18)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = COLOR_TEXT_MAIN
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 13
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local valLabel = Instance.new("TextLabel")
+    valLabel.Size = UDim2.new(0.3, 0, 0, 18)
+    valLabel.Position = UDim2.new(0.7, 0, 0, 0)
+    valLabel.BackgroundTransparency = 1
+    valLabel.Text = tostring(default) .. "/" .. tostring(max)
+    valLabel.TextColor3 = COLOR_BABY_BLUE_DARK
+    valLabel.Font = Enum.Font.GothamBold
+    valLabel.TextSize = 12
+    valLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valLabel.Parent = row
+
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(1, 0, 0, 10)
+    track.Position = UDim2.new(0, 0, 0, 26)
+    track.BackgroundColor3 = Color3.fromRGB(215, 228, 240)
+    track.BorderSizePixel = 0
+    track.Parent = row
+
+    local trackCorner = Instance.new("UICorner")
+    trackCorner.CornerRadius = UDim.new(1, 0)
+    trackCorner.Parent = track
+
+    local fill = Instance.new("Frame")
+    local pct = (default - min) / (max - min)
+    fill.Size = UDim2.new(pct, 0, 1, 0)
+    fill.BackgroundColor3 = COLOR_BABY_BLUE
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(1, 0)
+    fillCorner.Parent = fill
+
+    local dragging = false
+    local function updateSlider(input)
+        local pos = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        local value = math.floor(min + (max - min) * pos)
+        fill.Size = UDim2.new(pos, 0, 1, 0)
+        valLabel.Text = tostring(value) .. "/" .. tostring(max)
+        callback(value)
+    end
+
+    track.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            updateSlider(input)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateSlider(input)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+local function addButton(card, text, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 34)
+    btn.BackgroundColor3 = COLOR_HEADER
+    btn.Text = text
+    btn.TextColor3 = COLOR_BABY_BLUE_DARK
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 13
+    btn.AutoButtonColor = false
+    btn.Parent = card
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 8)
+    btnCorner.Parent = btn
+
+    local btnStroke = Instance.new("UIStroke")
+    btnStroke.Color = COLOR_STROKE
+    btnStroke.Thickness = 1
+    btnStroke.Parent = btn
+
+    btn.MouseButton1Click:Connect(callback)
+end
+
+local mainPage = createTab("Main")
+local physicsPage = createTab("Physics")
+local settingsPage = createTab("Settings")
+
+local magCard = createCard(mainPage, "Magnets")
+addToggle(magCard, "Enable Magnets", false, function(val)
+    getgenv().MagsActivated = val
+    if not val then removeHitboxes() end
+end)
+addToggle(magCard, "Show Visual Hitbox", false, function(val)
+    getgenv().ShowHitbox = val
+    if not val then removeHitboxes() end
+end)
+addSlider(magCard, "Magnet Distance", 1, 100, 10, function(val)
+    getgenv().MagsRange = val
+end)
+
+local pullCard = createCard(mainPage, "Pull Vector")
+addToggle(pullCard, "Enable Pull Vector", false, function(val)
+    getgenv().PullEnabled = val
+    pullButton.Visible = val
+    if not val then
+        pullButtonHeld = false
+        pullButton.BackgroundColor3 = COLOR_BABY_BLUE
+    end
+end)
+addSlider(pullCard, "Pull Power", 1, 25, 10, function(val)
+    getgenv().PullPower = val
+end)
+
+local speedCard = createCard(physicsPage, "CFrame Speed")
+addToggle(speedCard, "Enable Speed Boost", false, function(val)
+    getgenv().SpeedEnabled = val
+    if val then startMovementSystem() else stopMovementSystem() end
+end)
+addSlider(speedCard, "Speed Multiplier", 1, 5, 1, function(val)
+    getgenv().SpeedValue = val
+end)
+
+local jumpCard = createCard(physicsPage, "Jump Power")
+addToggle(jumpCard, "Enable Jump Boost", false, function(val)
+    getgenv().JumpPowerOn = val
+end)
+addSlider(jumpCard, "Jump Boost Power", 50, 120, 50, function(val)
+    getgenv().JumpBoost = val
+end)
+
+local tackleCard = createCard(physicsPage, "Tackle Controls")
+addToggle(tackleCard, "Click Tackle Teleport", false, function(val)
+    getgenv().ClickTackleEnabled = val
+    if val then enableClickTackle() else disableClickTackle() end
+end)
+addSlider(tackleCard, "Tackle Range", 1, 30, 15, function(val)
+    getgenv().ClickTackleRange = val
+end)
+
+local menuCard = createCard(settingsPage, "Menu Controls")
+addButton(menuCard, "Unload Wafer Hub Script", function()
+    getgenv().MagsActivated = false
+    getgenv().ShowHitbox = false
+    getgenv().SpeedEnabled = false
+    getgenv().JumpPowerOn = false
+    getgenv().PullEnabled = false
+    getgenv().ClickTackleEnabled = false
+    removeHitboxes()
+    stopMovementSystem()
+    disableClickTackle()
+    if pullButtonGui then pullButtonGui:Destroy() end
+    if mainGui then mainGui:Destroy() end
+end)
+
+switchTab(tabs["Main"].Btn, tabs["Main"].Page)
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode == getgenv().MenuKey then
+        mainFrame.Visible = not mainFrame.Visible
+    end
+end)
+
+print("Wafer Hub Soft Light Baby Blue UI loaded successfully!")
+]])()
