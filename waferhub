@@ -329,11 +329,18 @@ infoLabel.TextSize = 11
 infoLabel.TextXAlignment = Enum.TextXAlignment.Left
 infoLabel.Parent = keyFrame
 
+local savedKey = ""
+if isfile and isfile("wafer_saved_key.txt") then
+    pcall(function()
+        savedKey = readfile("wafer_saved_key.txt"):sub(1, 32)
+    end)
+end
+
 local keyInput = Instance.new("TextBox")
 keyInput.Size = UDim2.new(1, -36, 0, 42)
 keyInput.Position = UDim2.new(0, 18, 0, 94)
 keyInput.BackgroundColor3 = COLOR_CARD
-keyInput.Text = ""
+keyInput.Text = savedKey
 keyInput.PlaceholderText = "Paste 32-character key (e.g. WAF0-8F92A...)..."
 keyInput.TextColor3 = COLOR_TEXT_MAIN
 keyInput.PlaceholderColor3 = COLOR_TEXT_MUTED
@@ -1380,22 +1387,49 @@ local function loadMainWaferHub(initialBadgeText, keyData)
     print("Wafer Hub unlocked and loaded successfully!")
 end
 
+local function attemptVerify(inputKeyText)
+    local isValid, message, badgeText, keyData = validateKey(inputKeyText)
+    if isValid then
+        if writefile then
+            pcall(function()
+                writefile("wafer_saved_key.txt", string.upper(string.gsub(inputKeyText or "", "%s+", "")))
+            end)
+        end
+        statusLabel.Text = message
+        statusLabel.TextColor3 = COLOR_GREEN
+        task.wait(0.5)
+        loadMainWaferHub(badgeText, keyData)
+        return true
+    else
+        statusLabel.Text = message
+        statusLabel.TextColor3 = COLOR_RED
+        return false
+    end
+end
+
 verifyBtn.MouseButton1Click:Connect(function()
     statusLabel.Text = "Verifying key signature & device lock..."
     statusLabel.TextColor3 = COLOR_TEXT_MUTED
     task.wait(0.2)
-
-    local isValid, message, badgeText, keyData = validateKey(keyInput.Text)
-    if isValid then
-        statusLabel.Text = message
-        statusLabel.TextColor3 = COLOR_GREEN
-        task.wait(0.6)
-        loadMainWaferHub(badgeText, keyData)
-    else
-        statusLabel.Text = message
-        statusLabel.TextColor3 = COLOR_RED
-    end
+    attemptVerify(keyInput.Text)
 end)
+
+-- One-Time Enter Auto Login Check
+if savedKey and savedKey ~= "" and #savedKey == 32 then
+    task.spawn(function()
+        statusLabel.Text = "Auto-logging in with saved key..."
+        statusLabel.TextColor3 = COLOR_ACCENT
+        task.wait(0.4)
+        local autoSuccess = attemptVerify(savedKey)
+        if not autoSuccess then
+            if writefile and isfile and isfile("wafer_saved_key.txt") then
+                pcall(function()
+                    delfile("wafer_saved_key.txt")
+                end)
+            end
+        end
+    end)
+end
 
 print("Wafer Hub Anti-Share Live Countdown System loaded!")
 ]])()
