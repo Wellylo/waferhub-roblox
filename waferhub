@@ -51,9 +51,9 @@ local function verifyKeyChecksum(cleanKey)
         charSum = charSum + string.byte(first30, i)
     end
     
-    -- V2 Salted Checksum Algorithm
-    local idx1 = (((charSum * 19 + 7) % 36) + 1)
-    local idx2 = (((charSum * 23 + 13) % 36) + 1)
+    -- V3 Salted Checksum Algorithm
+    local idx1 = (((charSum * 31 + 17) % 36) + 1)
+    local idx2 = (((charSum * 37 + 29) % 36) + 1)
     
     local calcC1 = string.sub(BASE36, idx1, idx1)
     local calcC2 = string.sub(BASE36, idx2, idx2)
