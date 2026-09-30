@@ -51,8 +51,9 @@ local function verifyKeyChecksum(cleanKey)
         charSum = charSum + string.byte(first30, i)
     end
     
-    local idx1 = ((charSum * 7) % 36) + 1
-    local idx2 = ((charSum * 13) % 36) + 1
+    -- V2 Salted Checksum Algorithm
+    local idx1 = (((charSum * 19 + 7) % 36) + 1)
+    local idx2 = (((charSum * 23 + 13) % 36) + 1)
     
     local calcC1 = string.sub(BASE36, idx1, idx1)
     local calcC2 = string.sub(BASE36, idx2, idx2)
@@ -78,6 +79,18 @@ local function checkAndBindDevice(cleanKey, keyInfo)
     local currentHWID = getClientHWID()
     local username = player.Name
     local userId = tostring(player.UserId)
+
+    -- Check if key is permanently expired
+    local expiredKeys = {}
+    if isfile and isfile("wafer_expired_keys.json") then
+        pcall(function()
+            expiredKeys = HttpService:JSONDecode(readfile("wafer_expired_keys.json"))
+        end)
+    end
+    if type(expiredKeys) == "table" and expiredKeys[cleanKey] then
+        return false, "This key has expired and cannot be used again!", nil
+    end
+
     local boundData = {}
     
     if isfile and isfile("wafer_bound_keys.json") then
@@ -86,6 +99,30 @@ local function checkAndBindDevice(cleanKey, keyInfo)
         end)
     end
     if type(boundData) ~= "table" then boundData = {} end
+
+    -- Check HTTP remote gateway device lock
+    local httpReq = (syn and syn.request) or (http and http.request) or http_request or request
+    if httpReq then
+        pcall(function()
+            local res = httpReq({
+                Url = "https://wafer-hub-key-system.glitch.me/api/activate",
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode({
+                    key = cleanKey,
+                    hwid = currentHWID,
+                    username = username,
+                    userId = userId
+                })
+            })
+            if res and res.Body then
+                local body = HttpService:JSONDecode(res.Body)
+                if body and body.success == false and body.message then
+                    return false, body.message, nil
+                end
+            end
+        end)
+    end
     
     -- Check if key is bound in keys.json database first
     if keyInfo and type(keyInfo) == "table" then
@@ -202,15 +239,21 @@ local function validateKey(inputKey)
     end
 
     local isValidSignature = verifyKeyChecksum(cleanKey)
+    if not isValidSignature then
+        return false, "Invalid Key! (Old or invalid signature)", "", nil
+    end
+
     local allKeys = fetchKeys()
     local keyInfo = allKeys[cleanKey]
 
-    if keyInfo and keyInfo.status == "revoked" then
-        return false, "This Key Has Been Revoked!", "", nil
-    end
-
-    if not isValidSignature and not keyInfo then
-        return false, "Invalid Key! (Signature verification failed)", "", nil
+    if keyInfo then
+        if keyInfo.status == "revoked" then
+            return false, "This Key Has Been Revoked!", "", nil
+        end
+    else
+        if allKeys and next(allKeys) ~= nil then
+            return false, "This Key Has Been Revoked / Expired!", "", nil
+        end
     end
 
     -- First-Person Anti-Share Device Lock
@@ -264,13 +307,27 @@ local function validateKey(inputKey)
     local expiryTime = activatedAt + duration
 
     if currentTime >= expiryTime then
-        return false, "Key Expired! (Time limit reached)", "", nil
+        if writefile then
+            pcall(function()
+                local exp = {}
+                if isfile and isfile("wafer_expired_keys.json") then
+                    exp = HttpService:JSONDecode(readfile("wafer_expired_keys.json"))
+                end
+                if type(exp) ~= "table" then exp = {} end
+                exp[cleanKey] = { expired_at = currentTime, hwid = currentHWID }
+                writefile("wafer_expired_keys.json", HttpService:JSONEncode(exp))
+                if isfile and isfile("wafer_saved_key.txt") then
+                    delfile("wafer_saved_key.txt")
+                end
+            end)
+        end
+        return false, "Key Expired! (Time limit reached and key destroyed)", "", nil
     end
 
     local secLeft = expiryTime - currentTime
     local badgeText = typeName .. " (" .. tostring(secLeft) .. "s left)"
 
-    return true, typeName .. " Valid!", badgeText, { typeName = typeName, duration = duration, activatedAt = activatedAt, expiryTime = expiryTime }
+    return true, typeName .. " Valid!", badgeText, { cleanKey = cleanKey, typeName = typeName, duration = duration, activatedAt = activatedAt, expiryTime = expiryTime }
 end
 
 local keyGui = Instance.new("ScreenGui")
@@ -930,6 +987,24 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                 local secLeft = expiryTime - currentTime
                 
                 if secLeft <= 0 then
+                    -- Key Expired! Record to wafer_expired_keys.json & delete saved key
+                    if writefile then
+                        pcall(function()
+                            local exp = {}
+                            if isfile and isfile("wafer_expired_keys.json") then
+                                exp = HttpService:JSONDecode(readfile("wafer_expired_keys.json"))
+                            end
+                            if type(exp) ~= "table" then exp = {} end
+                            if keyData and keyData.cleanKey then
+                                exp[keyData.cleanKey] = { expired_at = os.time(), hwid = getClientHWID() }
+                            end
+                            writefile("wafer_expired_keys.json", HttpService:JSONEncode(exp))
+                            if isfile and isfile("wafer_saved_key.txt") then
+                                delfile("wafer_saved_key.txt")
+                            end
+                        end)
+                    end
+
                     -- Key Expired! Execute Live Shutdown
                     getgenv().MagsActivated = false
                     getgenv().ShowHitbox = false
@@ -1894,11 +1969,14 @@ if savedKey and savedKey ~= "" and #savedKey == 32 then
         task.wait(0.4)
         local autoSuccess = attemptVerify(savedKey)
         if not autoSuccess then
-            if writefile and isfile and isfile("wafer_saved_key.txt") then
+            if writefile and isfile then
                 pcall(function()
-                    delfile("wafer_saved_key.txt")
+                    if isfile("wafer_saved_key.txt") then delfile("wafer_saved_key.txt") end
+                    if isfile("wafer_bound_keys.json") then delfile("wafer_bound_keys.json") end
                 end)
             end
+            statusLabel.Text = "Saved key is revoked/invalid! Enter new key."
+            statusLabel.TextColor3 = COLOR_RED
         end
     end)
 end
