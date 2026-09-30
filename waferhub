@@ -1,4 +1,5 @@
--- WAFER HUB V1 - KEY AUTHENTICATION & SOFT BABY BLUE UI
+-- Wafer Hub v1 Compiled Executor Loader with Anti-Share Device Lock & Live Key Countdown
+loadstring([[
 repeat task.wait() until game:IsLoaded()
 
 local Players = game:GetService("Players")
@@ -11,7 +12,6 @@ local cloneref = cloneref or function(v) return v end
 local player = Players.LocalPlayer
 local Char = player.Character or player.CharacterAdded:Wait()
 
--- Destroy previous UI instances
 if player:WaitForChild("PlayerGui"):FindFirstChild("WaferHubKeyGui") then
     player.PlayerGui.WaferHubKeyGui:Destroy()
 end
@@ -21,86 +21,209 @@ end
 if player:WaitForChild("PlayerGui"):FindFirstChild("WaferPullGui") then
     player.PlayerGui.WaferPullGui:Destroy()
 end
+if player:WaitForChild("PlayerGui"):FindFirstChild("WaferExpiredAlert") then
+    player.PlayerGui.WaferExpiredAlert:Destroy()
+end
 
--- Theme Palette
-local COLOR_BG = Color3.fromRGB(242, 247, 252)
-local COLOR_HEADER = Color3.fromRGB(225, 236, 248)
-local COLOR_CARD = Color3.fromRGB(255, 255, 255)
-local COLOR_STROKE = Color3.fromRGB(195, 218, 242)
-local COLOR_BABY_BLUE = Color3.fromRGB(85, 175, 240)
-local COLOR_BABY_BLUE_DARK = Color3.fromRGB(50, 140, 210)
-local COLOR_TEXT_MAIN = Color3.fromRGB(25, 40, 60)
-local COLOR_TEXT_MUTED = Color3.fromRGB(100, 120, 145)
-local COLOR_RED = Color3.fromRGB(230, 80, 80)
-local COLOR_GREEN = Color3.fromRGB(60, 190, 120)
+local COLOR_BG = Color3.fromRGB(15, 15, 15)
+local COLOR_HEADER = Color3.fromRGB(24, 24, 24)
+local COLOR_CARD = Color3.fromRGB(10, 10, 10)
+local COLOR_STROKE = Color3.fromRGB(38, 38, 38)
+local COLOR_ACCENT = Color3.fromRGB(45, 125, 235)
+local COLOR_ACCENT_DARK = Color3.fromRGB(30, 95, 190)
+local COLOR_TEXT_MAIN = Color3.fromRGB(242, 242, 242)
+local COLOR_TEXT_MUTED = Color3.fromRGB(150, 150, 150)
+local COLOR_RED = Color3.fromRGB(235, 75, 75)
+local COLOR_GREEN = Color3.fromRGB(60, 195, 120)
 
--- Fallback Key Database (Hosted URL: https://raw.githubusercontent.com/Wellylo/waferhub-roblox/main/keys.json)
 local KEYS_URL = "https://raw.githubusercontent.com/Wellylo/waferhub-roblox/main/keys.json"
+local BASE36 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+-- Algorithmic Checksum Verification
+local function verifyKeyChecksum(cleanKey)
+    if #cleanKey ~= 32 then return false end
+    
+    local first30 = string.sub(cleanKey, 1, 30)
+    local expectedC1C2 = string.sub(cleanKey, 31, 32)
+    
+    local charSum = 0
+    for i = 1, 30 do
+        charSum = charSum + string.byte(first30, i)
+    end
+    
+    local idx1 = ((charSum * 7) % 36) + 1
+    local idx2 = ((charSum * 13) % 36) + 1
+    
+    local calcC1 = string.sub(BASE36, idx1, idx1)
+    local calcC2 = string.sub(BASE36, idx2, idx2)
+    
+    return (calcC1 .. calcC2) == expectedC1C2
+end
+
+local function getClientHWID()
+    local hwid = tostring(player.UserId)
+    pcall(function()
+        local rbxAnalytics = game:GetService("RbxAnalyticsService")
+        if rbxAnalytics then
+            local clientId = rbxAnalytics:GetClientId()
+            if clientId and clientId ~= "" then
+                hwid = hwid .. "_" .. tostring(clientId)
+            end
+        end
+    end)
+    return hwid
+end
+
+local function checkAndBindDevice(cleanKey)
+    local currentHWID = getClientHWID()
+    local boundData = {}
+    
+    if isfile and isfile("wafer_bound_keys.json") then
+        pcall(function()
+            boundData = HttpService:JSONDecode(readfile("wafer_bound_keys.json"))
+        end)
+    end
+    if type(boundData) ~= "table" then boundData = {} end
+    
+    local keyBinding = boundData[cleanKey]
+    if keyBinding and type(keyBinding) == "table" then
+        if keyBinding.hwid and tostring(keyBinding.hwid) ~= currentHWID then
+            return false, "Key bound to another device/account!", nil
+        end
+        return true, nil, tonumber(keyBinding.activated_at) or os.time()
+    else
+        local activatedAt = os.time()
+        boundData[cleanKey] = {
+            hwid = currentHWID,
+            activated_at = activatedAt
+        }
+        if writefile then
+            pcall(function()
+                writefile("wafer_bound_keys.json", HttpService:JSONEncode(boundData))
+            end)
+        end
+        return true, nil, activatedAt
+    end
+end
 
 local defaultKeys = {
-    lifetime = {
-        ["WAFER-LIFE-8F92A"] = true,
-        ["WAFER-LIFE-3X71K"] = true,
-        ["WAFER-LIFE-LIFETIME"] = true
-    },
-    weekly = {
-        ["WAFER-WEEK-A1B2C"] = 9999999999, -- Expiration unix timestamp
-        ["WAFER-WEEK-7DAYS"] = 9999999999
-    }
+    keys = {}
 }
 
 local function fetchKeys()
-    local success, response = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet(KEYS_URL))
-    end)
-    if success and type(response) == "table" then
-        return response
+    local combinedKeys = {}
+
+    local function mergeTable(tbl)
+        if type(tbl) ~= "table" then return end
+        local sourceKeys = tbl.keys or tbl
+        for k, v in pairs(sourceKeys) do
+            if type(k) == "string" then
+                local upperK = string.upper(string.gsub(k, "%s+", ""))
+                if type(v) == "table" then
+                    combinedKeys[upperK] = v
+                end
+            end
+        end
     end
-    return defaultKeys
+
+    mergeTable(defaultKeys)
+
+    if isfile and isfile("keys.json") then
+        pcall(function()
+            local content = readfile("keys.json")
+            local decoded = HttpService:JSONDecode(content)
+            mergeTable(decoded)
+        end)
+    end
+
+    pcall(function()
+        local remoteContent = game:HttpGet(KEYS_URL)
+        local decoded = HttpService:JSONDecode(remoteContent)
+        mergeTable(decoded)
+    end)
+
+    return combinedKeys
 end
 
 local function validateKey(inputKey)
-    local keysData = fetchKeys()
     local cleanKey = string.upper(string.gsub(inputKey or "", "%s+", ""))
     
     if not cleanKey or cleanKey == "" then
-        return false, "Please enter a key!"
+        return false, "Please enter your 32-character key!", "", nil
     end
 
-    -- Check Lifetime Keys
-    if keysData.lifetime then
-        if type(keysData.lifetime) == "table" then
-            for _, k in pairs(keysData.lifetime) do
-                if type(k) == "string" and string.upper(k) == cleanKey then
-                    return true, "Lifetime Access Granted!"
-                elseif keysData.lifetime[cleanKey] then
-                    return true, "Lifetime Access Granted!"
-                end
-            end
-        end
+    if #cleanKey ~= 32 then
+        return false, "Key must be exactly 32 characters!", "", nil
     end
 
-    -- Check 1-Week Keys
-    if keysData.weekly and type(keysData.weekly) == "table" then
-        for k, expiry in pairs(keysData.weekly) do
-            if string.upper(tostring(k)) == cleanKey then
-                local currentTime = os.time()
-                if type(expiry) == "number" and expiry > currentTime then
-                    local daysLeft = math.ceil((expiry - currentTime) / 86400)
-                    return true, "1-Week Key Valid (" .. tostring(daysLeft) .. " days remaining)"
-                elseif type(expiry) == "number" then
-                    return false, "Key Expired!"
-                else
-                    return true, "1-Week Key Valid!"
-                end
-            end
-        end
+    local isValidSignature = verifyKeyChecksum(cleanKey)
+    local allKeys = fetchKeys()
+    local keyInfo = allKeys[cleanKey]
+
+    if not isValidSignature and not keyInfo then
+        return false, "Invalid Key! (Signature verification failed)", "", nil
     end
 
-    return false, "Invalid Key!"
+    -- First-Person Anti-Share Device Lock
+    local isAllowed, lockError, firstActivationTime = checkAndBindDevice(cleanKey)
+    if not isAllowed then
+        return false, lockError, "", nil
+    end
+
+    -- Extract Key Duration & Type
+    local prefix = string.sub(cleanKey, 1, 5)
+    local keyType = "daily"
+    local duration = 86400
+    local typeName = "1-Day Key"
+
+    if prefix == "WAF0-" then
+        keyType = "test"
+        duration = 20
+        typeName = "20s Test Key"
+    elseif prefix == "WAF1-" then
+        keyType = "daily"
+        duration = 86400
+        typeName = "1-Day Key"
+    elseif prefix == "WAF7-" then
+        keyType = "weekly"
+        duration = 604800
+        typeName = "1-Week Key"
+    elseif prefix == "WAF3-" then
+        keyType = "monthly"
+        duration = 2592000
+        typeName = "1-Month Key"
+    elseif prefix == "WAFL-" then
+        keyType = "lifetime"
+        duration = 0
+        typeName = "Lifetime Key"
+    elseif keyInfo then
+        keyType = tostring(keyInfo.type or "daily"):lower()
+        duration = tonumber(keyInfo.duration) or 86400
+        if keyType == "20_sec" or duration == 20 then typeName = "20s Test Key"
+        elseif keyType == "lifetime" or duration == 0 then typeName = "Lifetime Key"
+        elseif keyType == "weekly" or duration == 604800 then typeName = "1-Week Key"
+        elseif keyType == "monthly" or duration == 2592000 then typeName = "1-Month Key"
+        else typeName = "1-Day Key" end
+    end
+
+    if keyType == "lifetime" or duration == 0 then
+        return true, "Lifetime Access Granted!", "Lifetime Key", { typeName = "Lifetime Key", duration = 0, activatedAt = firstActivationTime }
+    end
+
+    local currentTime = os.time()
+    local activatedAt = firstActivationTime or (keyInfo and tonumber(keyInfo.activated_at)) or currentTime
+    local expiryTime = activatedAt + duration
+
+    if currentTime >= expiryTime then
+        return false, "Key Expired! (Time limit reached)", "", nil
+    end
+
+    local secLeft = expiryTime - currentTime
+    local badgeText = typeName .. " (" .. tostring(secLeft) .. "s left)"
+
+    return true, typeName .. " Valid!", badgeText, { typeName = typeName, duration = duration, activatedAt = activatedAt, expiryTime = expiryTime }
 end
 
--- Key Prompt Window
 local keyGui = Instance.new("ScreenGui")
 keyGui.Name = "WaferHubKeyGui"
 keyGui.ResetOnSpawn = false
@@ -108,8 +231,8 @@ keyGui.Parent = player:WaitForChild("PlayerGui")
 
 local keyFrame = Instance.new("Frame")
 keyFrame.Name = "KeyFrame"
-keyFrame.Size = UDim2.new(0, 420, 0, 260)
-keyFrame.Position = UDim2.new(0.5, -210, 0.5, -130)
+keyFrame.Size = UDim2.new(0, 440, 0, 270)
+keyFrame.Position = UDim2.new(0.5, -220, 0.5, -135)
 keyFrame.BackgroundColor3 = COLOR_BG
 keyFrame.BorderSizePixel = 0
 keyFrame.Active = true
@@ -125,9 +248,8 @@ keyStroke.Color = COLOR_STROKE
 keyStroke.Thickness = 2
 keyStroke.Parent = keyFrame
 
--- Header
 local keyHeader = Instance.new("Frame")
-keyHeader.Size = UDim2.new(1, 0, 0, 48)
+keyHeader.Size = UDim2.new(1, 0, 0, 50)
 keyHeader.BackgroundColor3 = COLOR_HEADER
 keyHeader.BorderSizePixel = 0
 keyHeader.Parent = keyFrame
@@ -138,38 +260,36 @@ keyHeaderCorner.Parent = keyHeader
 
 local keyTitle = Instance.new("TextLabel")
 keyTitle.Size = UDim2.new(1, -20, 1, 0)
-keyTitle.Position = UDim2.new(0, 16, 0, 0)
+keyTitle.Position = UDim2.new(0, 18, 0, 0)
 keyTitle.BackgroundTransparency = 1
-keyTitle.Text = "Wafer Hub  |  Key System"
-keyTitle.TextColor3 = COLOR_BABY_BLUE_DARK
-keyTitle.Font = Enum.Font.FredokaOne
-keyTitle.TextSize = 20
+keyTitle.Text = "Wafer Hub  |  32-Char Key System"
+keyTitle.TextColor3 = COLOR_ACCENT
+keyTitle.Font = Enum.Font.GothamBold
+keyTitle.TextSize = 17
 keyTitle.TextXAlignment = Enum.TextXAlignment.Left
 keyTitle.Parent = keyHeader
 
--- Subtitle / Info
 local infoLabel = Instance.new("TextLabel")
-infoLabel.Size = UDim2.new(1, -32, 0, 24)
-infoLabel.Position = UDim2.new(0, 16, 0, 60)
+infoLabel.Size = UDim2.new(1, -36, 0, 24)
+infoLabel.Position = UDim2.new(0, 18, 0, 62)
 infoLabel.BackgroundTransparency = 1
-infoLabel.Text = "Enter your 1-Week or Lifetime Key to unlock Wafer Hub:"
+infoLabel.Text = "Enter your 32-character key (20s Test, 1 Day, 1 Week, 1 Month, Lifetime):"
 infoLabel.TextColor3 = COLOR_TEXT_MUTED
 infoLabel.Font = Enum.Font.GothamMedium
-infoLabel.TextSize = 12
+infoLabel.TextSize = 11
 infoLabel.TextXAlignment = Enum.TextXAlignment.Left
 infoLabel.Parent = keyFrame
 
--- Key Input Box
 local keyInput = Instance.new("TextBox")
-keyInput.Size = UDim2.new(1, -32, 0, 42)
-keyInput.Position = UDim2.new(0, 16, 0, 92)
+keyInput.Size = UDim2.new(1, -36, 0, 42)
+keyInput.Position = UDim2.new(0, 18, 0, 94)
 keyInput.BackgroundColor3 = COLOR_CARD
 keyInput.Text = ""
-keyInput.PlaceholderText = "Paste key here (e.g. WAFER-LIFE-8F92A)..."
+keyInput.PlaceholderText = "Paste 32-character key (e.g. WAF0-8F92A...)..."
 keyInput.TextColor3 = COLOR_TEXT_MAIN
-keyInput.PlaceholderColor3 = Color3.fromRGB(160, 180, 205)
+keyInput.PlaceholderColor3 = COLOR_TEXT_MUTED
 keyInput.Font = Enum.Font.GothamBold
-keyInput.TextSize = 13
+keyInput.TextSize = 12
 keyInput.ClearTextOnFocus = false
 keyInput.Parent = keyFrame
 
@@ -182,10 +302,9 @@ inputStroke.Color = COLOR_STROKE
 inputStroke.Thickness = 1
 inputStroke.Parent = keyInput
 
--- Status Message Label
 local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(1, -32, 0, 20)
-statusLabel.Position = UDim2.new(0, 16, 0, 140)
+statusLabel.Size = UDim2.new(1, -36, 0, 20)
+statusLabel.Position = UDim2.new(0, 18, 0, 144)
 statusLabel.BackgroundTransparency = 1
 statusLabel.Text = ""
 statusLabel.TextColor3 = COLOR_TEXT_MUTED
@@ -193,11 +312,10 @@ statusLabel.Font = Enum.Font.GothamBold
 statusLabel.TextSize = 12
 statusLabel.Parent = keyFrame
 
--- Verify Button
 local verifyBtn = Instance.new("TextButton")
-verifyBtn.Size = UDim2.new(0.6, -8, 0, 40)
-verifyBtn.Position = UDim2.new(0, 16, 0, 168)
-verifyBtn.BackgroundColor3 = COLOR_BABY_BLUE
+verifyBtn.Size = UDim2.new(0.6, -9, 0, 42)
+verifyBtn.Position = UDim2.new(0, 18, 0, 174)
+verifyBtn.BackgroundColor3 = COLOR_ACCENT
 verifyBtn.Text = "VERIFY KEY"
 verifyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 verifyBtn.Font = Enum.Font.GothamBold
@@ -209,13 +327,12 @@ local verifyCorner = Instance.new("UICorner")
 verifyCorner.CornerRadius = UDim.new(0, 10)
 verifyCorner.Parent = verifyBtn
 
--- Get Key Button (Copies Discord link)
 local getKeyBtn = Instance.new("TextButton")
-getKeyBtn.Size = UDim2.new(0.4, -8, 0, 40)
-getKeyBtn.Position = UDim2.new(0.6, 8, 0, 168)
+getKeyBtn.Size = UDim2.new(0.4, -9, 0, 42)
+getKeyBtn.Position = UDim2.new(0.6, 9, 0, 174)
 getKeyBtn.BackgroundColor3 = COLOR_HEADER
 getKeyBtn.Text = "GET KEY"
-getKeyBtn.TextColor3 = COLOR_BABY_BLUE_DARK
+getKeyBtn.TextColor3 = COLOR_ACCENT
 getKeyBtn.Font = Enum.Font.GothamBold
 getKeyBtn.TextSize = 13
 getKeyBtn.AutoButtonColor = false
@@ -225,19 +342,25 @@ local getKeyCorner = Instance.new("UICorner")
 getKeyCorner.CornerRadius = UDim.new(0, 10)
 getKeyCorner.Parent = getKeyBtn
 
+local getKeyStroke = Instance.new("UIStroke")
+getKeyStroke.Color = COLOR_STROKE
+getKeyStroke.Thickness = 1
+getKeyStroke.Parent = getKeyBtn
+
 getKeyBtn.MouseButton1Click:Connect(function()
-    setclipboard("https://discord.gg/waferhub")
+    if setclipboard then
+        setclipboard("https://discord.gg/waferhub")
+    end
     statusLabel.Text = "Discord key link copied to clipboard!"
-    statusLabel.TextColor3 = COLOR_BABY_BLUE_DARK
+    statusLabel.TextColor3 = COLOR_ACCENT
 end)
 
--- Main Script Loader function (triggers after successful key auth)
-local function loadMainWaferHub()
+local function loadMainWaferHub(initialBadgeText, keyData)
     keyGui:Destroy()
     
-    -- State Globals
     getgenv().MagsActivated = false
     getgenv().MagsRange = 10
+    getgenv().MagsStrength = 50
     getgenv().ShowHitbox = false
     getgenv().SpeedEnabled = false
     getgenv().SpeedValue = 1
@@ -255,7 +378,6 @@ local function loadMainWaferHub()
     local pullButtonHeld = false
     local clickTackleConnection = nil
 
-    -- Pull Button
     local pullButtonGui = Instance.new("ScreenGui")
     pullButtonGui.Name = "WaferPullGui"
     pullButtonGui.ResetOnSpawn = false
@@ -273,7 +395,7 @@ local function loadMainWaferHub()
     local pullButton = Instance.new("TextButton")
     pullButton.Size = UDim2.new(0, 70, 0, 70)
     pullButton.Position = UDim2.new(0, 5, 0, 5)
-    pullButton.BackgroundColor3 = COLOR_BABY_BLUE
+    pullButton.BackgroundColor3 = COLOR_ACCENT
     pullButton.BorderSizePixel = 0
     pullButton.Text = "PULL"
     pullButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -304,7 +426,7 @@ local function loadMainWaferHub()
         hitbox.CanCollide = false
         hitbox.Transparency = 0.35
         hitbox.Material = Enum.Material.ForceField
-        hitbox.Color = COLOR_BABY_BLUE
+        hitbox.Color = COLOR_ACCENT
         hitbox.CastShadow = false
         hitbox.CFrame = oid.CFrame
         hitbox.Shape = Enum.PartType.Ball
@@ -452,22 +574,71 @@ local function loadMainWaferHub()
         end
     end
 
-    RunService.RenderStepped:Connect(function()
+    local orbitAngle = 0
+    local lastTouchFire = {}
+    
+    RunService.RenderStepped:Connect(function(dt)
         if not getgenv().MagsActivated then return end
         if getgenv().ShowHitbox then footballhitbox() end
         
+        orbitAngle = (orbitAngle + dt * 7) % (math.pi * 2)
+        local now = tick()
+        
         for _, v in next, workspace:GetChildren() do
-            if v.Name == "Football" then
-                v.CanCollide = false
+            if v.Name == "Football" and v:IsA("BasePart") then
                 local character = player.Character
                 if character and character:FindFirstChild("HumanoidRootPart") then
                     local hrp = character.HumanoidRootPart
                     local range = getgenv().MagsRange or 10
-                    local dist = (v.Position - hrp.Position).Magnitude
-                    if dist <= range then
-                        v.CFrame = hrp.CFrame
-                        firetouchinterest(hrp, v, 0)
-                        firetouchinterest(hrp, v, 0)
+                    
+                    local ballVel = v.AssemblyLinearVelocity or v.Velocity or Vector3.zero
+                    local predictedPos = v.Position + (ballVel * 0.04)
+                    local dist = (predictedPos - hrp.Position).Magnitude
+                    local realDist = (v.Position - hrp.Position).Magnitude
+                    
+                    if dist <= range or realDist <= range then
+                        v.CanCollide = false
+                        
+                        local targetHandsCFrame = hrp.CFrame * CFrame.new(0, 0.5, -0.8)
+                        local strength = getgenv().MagsStrength or 50
+                        
+                        if strength >= 100 then
+                            v.CFrame = targetHandsCFrame
+                        else
+                            local yDiff = predictedPos.Y - hrp.Position.Y
+                            local dynamicY = math.clamp(yDiff * 0.4, -1.2, 2.2) + 0.4
+                            
+                            local radius = math.clamp(realDist * 0.25, 0.4, 2.2)
+                            local orbitOffset = Vector3.new(
+                                math.cos(orbitAngle) * radius,
+                                dynamicY,
+                                math.sin(orbitAngle) * radius
+                            )
+                            local orbitCFrame = hrp.CFrame * CFrame.new(orbitOffset)
+                            
+                            local strengthFactor = math.clamp(strength / 100, 0.05, 0.99)
+                            local blendWeight = math.clamp((1 - (realDist / range)) * (0.3 + strengthFactor * 0.6), 0.15, 0.95)
+                            local targetCFrame = orbitCFrame:Lerp(targetHandsCFrame, blendWeight)
+                            
+                            local lerpAlpha = math.clamp(dt * (10 + strengthFactor * 30) + (1 - math.clamp(realDist / range, 0, 1)) * (strengthFactor * 0.5), 0.1, 0.95)
+                            v.CFrame = v.CFrame:Lerp(targetCFrame, lerpAlpha)
+                        end
+                        
+                        local pullDir = (targetHandsCFrame.Position - v.Position)
+                        if pullDir.Magnitude > 0.1 then
+                            pcall(function()
+                                local curSpeed = math.clamp(ballVel.Magnitude, 15, 45)
+                                v.AssemblyLinearVelocity = ballVel:Lerp(pullDir.Unit * curSpeed, 0.25)
+                            end)
+                        end
+                        
+                        if firetouchinterest and (not lastTouchFire[v] or (now - lastTouchFire[v]) >= 0.08 or realDist <= 4) then
+                            lastTouchFire[v] = now
+                            pcall(function()
+                                firetouchinterest(hrp, v, 0)
+                                firetouchinterest(hrp, v, 1)
+                            end)
+                        end
                     end
                 end
             end
@@ -479,7 +650,7 @@ local function loadMainWaferHub()
             if getgenv().PullEnabled and pullButtonHeld then
                 local character = player.Character
                 if character and character:FindFirstChild("HumanoidRootPart") then
-                    local hrp = character:FindFirstChild("HumanoidRootPart")
+                    local hrp = character.HumanoidRootPart
                     local target = workspace:FindFirstChild("Football")
                     if target and target:IsA("BasePart") then
                         local diff = target.Position - hrp.Position
@@ -497,18 +668,17 @@ local function loadMainWaferHub()
     pullButton.MouseButton1Down:Connect(function()
         if getgenv().PullEnabled then
             pullButtonHeld = true
-            pullButton.BackgroundColor3 = COLOR_BABY_BLUE_DARK
+            pullButton.BackgroundColor3 = COLOR_ACCENT_DARK
         end
     end)
     pullButton.MouseButton1Up:Connect(function()
         pullButtonHeld = false
-        pullButton.BackgroundColor3 = COLOR_BABY_BLUE
+        pullButton.BackgroundColor3 = COLOR_ACCENT
     end)
 
     if player.Character then whenmoving(player.Character) end
     player.CharacterAdded:Connect(whenmoving)
 
-    -- Main UI Window
     local mainGui = Instance.new("ScreenGui")
     mainGui.Name = "WaferHubLightGui"
     mainGui.ResetOnSpawn = false
@@ -516,8 +686,8 @@ local function loadMainWaferHub()
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 520, 0, 380)
-    mainFrame.Position = UDim2.new(0.5, -260, 0.5, -190)
+    mainFrame.Size = UDim2.new(0, 540, 0, 390)
+    mainFrame.Position = UDim2.new(0.5, -270, 0.5, -195)
     mainFrame.BackgroundColor3 = COLOR_BG
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
@@ -535,7 +705,7 @@ local function loadMainWaferHub()
 
     local header = Instance.new("Frame")
     header.Name = "Header"
-    header.Size = UDim2.new(1, 0, 0, 50)
+    header.Size = UDim2.new(1, 0, 0, 56)
     header.BackgroundColor3 = COLOR_HEADER
     header.BorderSizePixel = 0
     header.Parent = mainFrame
@@ -544,40 +714,192 @@ local function loadMainWaferHub()
     headerCorner.CornerRadius = UDim.new(0, 16)
     headerCorner.Parent = header
 
-    local logoTitle = Instance.new("TextLabel")
-    logoTitle.Size = UDim2.new(0, 200, 1, 0)
-    logoTitle.Position = UDim2.new(0, 18, 0, 0)
-    logoTitle.BackgroundTransparency = 1
-    logoTitle.Text = "Wafer Hub"
-    logoTitle.TextColor3 = COLOR_BABY_BLUE_DARK
-    logoTitle.Font = Enum.Font.FredokaOne
-    logoTitle.TextSize = 22
-    logoTitle.TextXAlignment = Enum.TextXAlignment.Left
-    logoTitle.Parent = header
+    local avatarImg = Instance.new("ImageLabel")
+    avatarImg.Name = "AvatarImage"
+    avatarImg.Size = UDim2.new(0, 38, 0, 38)
+    avatarImg.Position = UDim2.new(0, 12, 0.5, -19)
+    avatarImg.BackgroundColor3 = COLOR_CARD
+    avatarImg.BorderSizePixel = 0
+    avatarImg.Parent = header
 
-    local versionTag = Instance.new("TextLabel")
-    versionTag.Size = UDim2.new(0, 90, 0, 24)
-    versionTag.Position = UDim2.new(1, -110, 0.5, -12)
-    versionTag.BackgroundColor3 = COLOR_CARD
-    versionTag.Text = "Football v1"
-    versionTag.TextColor3 = COLOR_BABY_BLUE
-    versionTag.Font = Enum.Font.GothamBold
-    versionTag.TextSize = 11
-    versionTag.Parent = header
+    local avatarCorner = Instance.new("UICorner")
+    avatarCorner.CornerRadius = UDim.new(1, 0)
+    avatarCorner.Parent = avatarImg
 
-    local tagCorner = Instance.new("UICorner")
-    tagCorner.CornerRadius = UDim.new(0, 12)
-    tagCorner.Parent = versionTag
+    local avatarStroke = Instance.new("UIStroke")
+    avatarStroke.Color = COLOR_STROKE
+    avatarStroke.Thickness = 1
+    avatarStroke.Parent = avatarImg
 
-    local tagStroke = Instance.new("UIStroke")
-    tagStroke.Color = COLOR_STROKE
-    tagStroke.Thickness = 1
-    tagStroke.Parent = versionTag
+    task.spawn(function()
+        local content, isReady = Players:GetUserThumbnailAsync(player.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+        if isReady and content then
+            avatarImg.Image = content
+        end
+    end)
+
+    local playerInfoFrame = Instance.new("Frame")
+    playerInfoFrame.Name = "PlayerInfo"
+    playerInfoFrame.Size = UDim2.new(0, 180, 1, 0)
+    playerInfoFrame.Position = UDim2.new(0, 58, 0, 0)
+    playerInfoFrame.BackgroundTransparency = 1
+    playerInfoFrame.Parent = header
+
+    local displayNameLabel = Instance.new("TextLabel")
+    displayNameLabel.Size = UDim2.new(1, 0, 0, 20)
+    displayNameLabel.Position = UDim2.new(0, 0, 0.5, -18)
+    displayNameLabel.BackgroundTransparency = 1
+    displayNameLabel.Text = player.DisplayName
+    displayNameLabel.TextColor3 = COLOR_TEXT_MAIN
+    displayNameLabel.Font = Enum.Font.GothamBold
+    displayNameLabel.TextSize = 14
+    displayNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    displayNameLabel.Parent = playerInfoFrame
+
+    local usernameLabel = Instance.new("TextLabel")
+    usernameLabel.Size = UDim2.new(1, 0, 0, 16)
+    usernameLabel.Position = UDim2.new(0, 0, 0.5, 2)
+    usernameLabel.BackgroundTransparency = 1
+    usernameLabel.Text = "@" .. player.Name
+    usernameLabel.TextColor3 = COLOR_TEXT_MUTED
+    usernameLabel.Font = Enum.Font.GothamMedium
+    usernameLabel.TextSize = 11
+    usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    usernameLabel.Parent = playerInfoFrame
+
+    local keyTag = Instance.new("TextLabel")
+    keyTag.Name = "KeyTag"
+    keyTag.Size = UDim2.new(0, 170, 0, 28)
+    keyTag.Position = UDim2.new(1, -182, 0.5, -14)
+    keyTag.BackgroundColor3 = COLOR_CARD
+    keyTag.Text = (initialBadgeText and initialBadgeText ~= "") and initialBadgeText or "Lifetime Key"
+    keyTag.TextColor3 = COLOR_ACCENT
+    keyTag.Font = Enum.Font.GothamBold
+    keyTag.TextSize = 10
+    keyTag.Parent = header
+
+    local keyTagCorner = Instance.new("UICorner")
+    keyTagCorner.CornerRadius = UDim.new(0, 10)
+    keyTagCorner.Parent = keyTag
+
+    local keyTagStroke = Instance.new("UIStroke")
+    keyTagStroke.Color = COLOR_STROKE
+    keyTagStroke.Thickness = 1
+    keyTagStroke.Parent = keyTag
+
+    -- LIVE COUNTDOWN TIMER LOOP & INSTANT EXPIRATION SHUTDOWN
+    if keyData and keyData.duration and keyData.duration > 0 and keyData.expiryTime then
+        task.spawn(function()
+            local typeName = keyData.typeName or "Key"
+            local expiryTime = keyData.expiryTime
+            
+            while mainGui and mainGui.Parent do
+                task.wait(1)
+                local currentTime = os.time()
+                local secLeft = expiryTime - currentTime
+                
+                if secLeft <= 0 then
+                    -- Key Expired! Execute Live Shutdown
+                    getgenv().MagsActivated = false
+                    getgenv().ShowHitbox = false
+                    getgenv().SpeedEnabled = false
+                    getgenv().JumpPowerOn = false
+                    getgenv().PullEnabled = false
+                    getgenv().ClickTackleEnabled = false
+                    removeHitboxes()
+                    stopMovementSystem()
+                    disableClickTackle()
+                    if pullButtonGui then pullButtonGui:Destroy() end
+                    if mainGui then mainGui:Destroy() end
+                    
+                    -- Popup Alert Modal for Expired Key
+                    local alertGui = Instance.new("ScreenGui")
+                    alertGui.Name = "WaferExpiredAlert"
+                    alertGui.ResetOnSpawn = false
+                    alertGui.Parent = player:WaitForChild("PlayerGui")
+                    
+                    local alertFrame = Instance.new("Frame")
+                    alertFrame.Size = UDim2.new(0, 360, 0, 180)
+                    alertFrame.Position = UDim2.new(0.5, -180, 0.5, -90)
+                    alertFrame.BackgroundColor3 = COLOR_BG
+                    alertFrame.BorderSizePixel = 0
+                    alertFrame.Active = true
+                    alertFrame.Draggable = true
+                    alertFrame.Parent = alertGui
+                    
+                    local alertCorner = Instance.new("UICorner")
+                    alertCorner.CornerRadius = UDim.new(0, 16)
+                    alertCorner.Parent = alertFrame
+                    
+                    local alertStroke = Instance.new("UIStroke")
+                    alertStroke.Color = COLOR_RED
+                    alertStroke.Thickness = 2
+                    alertStroke.Parent = alertFrame
+                    
+                    local alertTitle = Instance.new("TextLabel")
+                    alertTitle.Size = UDim2.new(1, 0, 0, 40)
+                    alertTitle.Position = UDim2.new(0, 0, 0, 15)
+                    alertTitle.BackgroundTransparency = 1
+                    alertTitle.Text = "Key Expired!"
+                    alertTitle.TextColor3 = COLOR_RED
+                    alertTitle.Font = Enum.Font.GothamBold
+                    alertTitle.TextSize = 20
+                    alertTitle.Parent = alertFrame
+                    
+                    local alertMsg = Instance.new("TextLabel")
+                    alertMsg.Size = UDim2.new(1, -30, 0, 50)
+                    alertMsg.Position = UDim2.new(0, 15, 0, 55)
+                    alertMsg.BackgroundTransparency = 1
+                    alertMsg.Text = "Your key time limit has run out.\nPlease generate or obtain a new key."
+                    alertMsg.TextColor3 = COLOR_TEXT_MAIN
+                    alertMsg.Font = Enum.Font.GothamMedium
+                    alertMsg.TextSize = 13
+                    alertMsg.TextWrapped = true
+                    alertMsg.Parent = alertFrame
+                    
+                    local closeBtn = Instance.new("TextButton")
+                    closeBtn.Size = UDim2.new(0, 120, 0, 36)
+                    closeBtn.Position = UDim2.new(0.5, -60, 1, -50)
+                    closeBtn.BackgroundColor3 = COLOR_HEADER
+                    closeBtn.Text = "CLOSE"
+                    closeBtn.TextColor3 = COLOR_TEXT_MAIN
+                    closeBtn.Font = Enum.Font.GothamBold
+                    closeBtn.TextSize = 12
+                    closeBtn.Parent = alertFrame
+                    
+                    local closeCorner = Instance.new("UICorner")
+                    closeCorner.CornerRadius = UDim.new(0, 8)
+                    closeCorner.Parent = closeBtn
+                    
+                    closeBtn.MouseButton1Click:Connect(function()
+                        alertGui:Destroy()
+                    end)
+                    
+                    break
+                else
+                    local daysLeft = math.floor(secLeft / 86400)
+                    local hrsLeft = math.floor((secLeft % 86400) / 3600)
+                    local minsLeft = math.floor((secLeft % 3600) / 60)
+                    local secsLeft = secLeft % 60
+                    
+                    if daysLeft > 0 then
+                        keyTag.Text = typeName .. " (" .. daysLeft .. "d " .. hrsLeft .. "h)"
+                    elseif hrsLeft > 0 then
+                        keyTag.Text = typeName .. " (" .. hrsLeft .. "h " .. minsLeft .. "m)"
+                    elseif minsLeft > 0 then
+                        keyTag.Text = typeName .. " (" .. minsLeft .. "m " .. secsLeft .. "s)"
+                    else
+                        keyTag.Text = typeName .. " (" .. secsLeft .. "s left)"
+                    end
+                end
+            end
+        end)
+    end
 
     local navBar = Instance.new("Frame")
     navBar.Name = "NavBar"
     navBar.Size = UDim2.new(1, -32, 0, 38)
-    navBar.Position = UDim2.new(0, 16, 0, 60)
+    navBar.Position = UDim2.new(0, 16, 0, 66)
     navBar.BackgroundColor3 = COLOR_HEADER
     navBar.BorderSizePixel = 0
     navBar.Parent = mainFrame
@@ -601,8 +923,8 @@ local function loadMainWaferHub()
 
     local content = Instance.new("Frame")
     content.Name = "Content"
-    content.Size = UDim2.new(1, -32, 1, -114)
-    content.Position = UDim2.new(0, 16, 0, 106)
+    content.Size = UDim2.new(1, -32, 1, -120)
+    content.Position = UDim2.new(0, 16, 0, 112)
     content.BackgroundTransparency = 1
     content.Parent = mainFrame
 
@@ -610,14 +932,14 @@ local function loadMainWaferHub()
 
     local function switchTab(tabBtn, tabContainer)
         for _, t in pairs(tabs) do
-            t.Btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+            t.Btn.BackgroundColor3 = COLOR_HEADER
             t.Btn.BackgroundTransparency = 1
             t.Btn.TextColor3 = COLOR_TEXT_MUTED
             t.Page.Visible = false
         end
         tabBtn.BackgroundColor3 = COLOR_CARD
         tabBtn.BackgroundTransparency = 0
-        tabBtn.TextColor3 = COLOR_BABY_BLUE_DARK
+        tabBtn.TextColor3 = COLOR_ACCENT
         tabContainer.Visible = true
     end
 
@@ -627,7 +949,7 @@ local function loadMainWaferHub()
         page.Size = UDim2.new(1, 0, 1, 0)
         page.BackgroundTransparency = 1
         page.ScrollBarThickness = 4
-        page.ScrollBarImageColor3 = COLOR_BABY_BLUE
+        page.ScrollBarImageColor3 = COLOR_ACCENT
         page.Visible = false
         page.Parent = content
 
@@ -685,7 +1007,7 @@ local function loadMainWaferHub()
         title.Position = UDim2.new(0, 12, 0, 6)
         title.BackgroundTransparency = 1
         title.Text = titleText
-        title.TextColor3 = COLOR_BABY_BLUE_DARK
+        title.TextColor3 = COLOR_ACCENT
         title.Font = Enum.Font.GothamBold
         title.TextSize = 13
         title.TextXAlignment = Enum.TextXAlignment.Left
@@ -725,7 +1047,7 @@ local function loadMainWaferHub()
         local switch = Instance.new("TextButton")
         switch.Size = UDim2.new(0, 44, 0, 24)
         switch.Position = UDim2.new(1, -44, 0.5, -12)
-        switch.BackgroundColor3 = defaultState and COLOR_BABY_BLUE or Color3.fromRGB(210, 222, 235)
+        switch.BackgroundColor3 = defaultState and COLOR_ACCENT or Color3.fromRGB(45, 45, 45)
         switch.Text = ""
         switch.AutoButtonColor = false
         switch.Parent = row
@@ -737,7 +1059,7 @@ local function loadMainWaferHub()
         local knob = Instance.new("Frame")
         knob.Size = UDim2.new(0, 18, 0, 18)
         knob.Position = defaultState and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
-        knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        knob.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
         knob.BorderSizePixel = 0
         knob.Parent = switch
 
@@ -748,7 +1070,7 @@ local function loadMainWaferHub()
         local state = defaultState
         switch.MouseButton1Click:Connect(function()
             state = not state
-            TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = state and COLOR_BABY_BLUE or Color3.fromRGB(210, 222, 235)}):Play()
+            TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = state and COLOR_ACCENT or Color3.fromRGB(45, 45, 45)}):Play()
             TweenService:Create(knob, TweenInfo.new(0.2), {Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)}):Play()
             callback(state)
         end)
@@ -775,7 +1097,7 @@ local function loadMainWaferHub()
         valLabel.Position = UDim2.new(0.7, 0, 0, 0)
         valLabel.BackgroundTransparency = 1
         valLabel.Text = tostring(default) .. "/" .. tostring(max)
-        valLabel.TextColor3 = COLOR_BABY_BLUE_DARK
+        valLabel.TextColor3 = COLOR_ACCENT
         valLabel.Font = Enum.Font.GothamBold
         valLabel.TextSize = 12
         valLabel.TextXAlignment = Enum.TextXAlignment.Right
@@ -784,7 +1106,7 @@ local function loadMainWaferHub()
         local track = Instance.new("Frame")
         track.Size = UDim2.new(1, 0, 0, 10)
         track.Position = UDim2.new(0, 0, 0, 26)
-        track.BackgroundColor3 = Color3.fromRGB(215, 228, 240)
+        track.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
         track.BorderSizePixel = 0
         track.Parent = row
 
@@ -795,7 +1117,7 @@ local function loadMainWaferHub()
         local fill = Instance.new("Frame")
         local pct = (default - min) / (max - min)
         fill.Size = UDim2.new(pct, 0, 1, 0)
-        fill.BackgroundColor3 = COLOR_BABY_BLUE
+        fill.BackgroundColor3 = COLOR_ACCENT
         fill.BorderSizePixel = 0
         fill.Parent = track
 
@@ -835,7 +1157,7 @@ local function loadMainWaferHub()
         btn.Size = UDim2.new(1, 0, 0, 34)
         btn.BackgroundColor3 = COLOR_HEADER
         btn.Text = text
-        btn.TextColor3 = COLOR_BABY_BLUE_DARK
+        btn.TextColor3 = COLOR_ACCENT
         btn.Font = Enum.Font.GothamBold
         btn.TextSize = 13
         btn.AutoButtonColor = false
@@ -851,6 +1173,65 @@ local function loadMainWaferHub()
         btnStroke.Parent = btn
 
         btn.MouseButton1Click:Connect(callback)
+    end
+
+    local function addKeybind(card, text, defaultKey, callback)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 30)
+        row.BackgroundTransparency = 1
+        row.Parent = card
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.6, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = COLOR_TEXT_MAIN
+        label.Font = Enum.Font.GothamMedium
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = row
+
+        local keyBtn = Instance.new("TextButton")
+        keyBtn.Size = UDim2.new(0, 100, 0, 26)
+        keyBtn.Position = UDim2.new(1, -100, 0.5, -13)
+        keyBtn.BackgroundColor3 = COLOR_HEADER
+        keyBtn.Text = defaultKey and defaultKey.Name or "None"
+        keyBtn.TextColor3 = COLOR_ACCENT
+        keyBtn.Font = Enum.Font.GothamBold
+        keyBtn.TextSize = 12
+        keyBtn.AutoButtonColor = false
+        keyBtn.Parent = row
+
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 6)
+        btnCorner.Parent = keyBtn
+
+        local btnStroke = Instance.new("UIStroke")
+        btnStroke.Color = COLOR_STROKE
+        btnStroke.Thickness = 1
+        btnStroke.Parent = keyBtn
+
+        local listening = false
+        local bindingConn
+
+        keyBtn.MouseButton1Click:Connect(function()
+            if listening then return end
+            listening = true
+            keyBtn.Text = "..."
+            keyBtn.TextColor3 = COLOR_TEXT_MUTED
+            
+            bindingConn = UserInputService.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.Keyboard then
+                    if input.KeyCode ~= Enum.KeyCode.Unknown then
+                        listening = false
+                        keyBtn.Text = input.KeyCode.Name
+                        keyBtn.TextColor3 = COLOR_ACCENT
+                        bindingConn:Disconnect()
+                        callback(input.KeyCode)
+                    end
+                end
+            end)
+        end)
     end
 
     local mainPage = createTab("Main")
@@ -869,6 +1250,9 @@ local function loadMainWaferHub()
     addSlider(magCard, "Magnet Distance", 1, 100, 10, function(val)
         getgenv().MagsRange = val
     end)
+    addSlider(magCard, "Magnet Strength", 1, 100, 50, function(val)
+        getgenv().MagsStrength = val
+    end)
 
     local pullCard = createCard(mainPage, "Pull Vector")
     addToggle(pullCard, "Enable Pull Vector", false, function(val)
@@ -876,7 +1260,7 @@ local function loadMainWaferHub()
         pullButton.Visible = val
         if not val then
             pullButtonHeld = false
-            pullButton.BackgroundColor3 = COLOR_BABY_BLUE
+            pullButton.BackgroundColor3 = COLOR_ACCENT
         end
     end)
     addSlider(pullCard, "Pull Power", 1, 25, 10, function(val)
@@ -894,7 +1278,7 @@ local function loadMainWaferHub()
 
     local jumpCard = createCard(physicsPage, "Jump Power")
     addToggle(jumpCard, "Enable Jump Boost", false, function(val)
-        getgenv().JumpPowerOn = val
+        getgenv().JumpPowerOn = false
     end)
     addSlider(jumpCard, "Jump Boost Power", 50, 120, 50, function(val)
         getgenv().JumpBoost = val
@@ -910,6 +1294,9 @@ local function loadMainWaferHub()
     end)
 
     local menuCard = createCard(settingsPage, "Menu Controls")
+    addKeybind(menuCard, "UI Toggle Keybind", getgenv().MenuKey, function(newKey)
+        getgenv().MenuKey = newKey
+    end)
     addButton(menuCard, "Unload Wafer Hub Script", function()
         getgenv().MagsActivated = false
         getgenv().ShowHitbox = false
@@ -932,23 +1319,25 @@ local function loadMainWaferHub()
         end
     end)
 
-    print("Wafer Hub unlocked successfully!")
+    print("Wafer Hub unlocked and loaded successfully!")
 end
 
--- Key Verification Handler
 verifyBtn.MouseButton1Click:Connect(function()
-    statusLabel.Text = "Checking key..."
+    statusLabel.Text = "Verifying key signature & device lock..."
     statusLabel.TextColor3 = COLOR_TEXT_MUTED
     task.wait(0.2)
 
-    local isValid, message = validateKey(keyInput.Text)
+    local isValid, message, badgeText, keyData = validateKey(keyInput.Text)
     if isValid then
         statusLabel.Text = message
         statusLabel.TextColor3 = COLOR_GREEN
         task.wait(0.6)
-        loadMainWaferHub()
+        loadMainWaferHub(badgeText, keyData)
     else
         statusLabel.Text = message
         statusLabel.TextColor3 = COLOR_RED
     end
 end)
+
+print("Wafer Hub Anti-Share Live Countdown System loaded!")
+]])()
