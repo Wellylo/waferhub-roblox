@@ -64,11 +64,11 @@ end
 local function getClientHWID()
     local hwid = tostring(player.UserId)
     pcall(function()
-        local rbxAnalytics = game:GetService("RbxAnalyticsService")
-        if rbxAnalytics then
-            local clientId = rbxAnalytics:GetClientId()
-            if clientId and clientId ~= "" then
-                hwid = hwid .. "_" .. tostring(clientId)
+        local getHwidFunc = gethwid or get_hwid or (syn and syn.gethwid)
+        if getHwidFunc then
+            local execHwid = getHwidFunc()
+            if execHwid and execHwid ~= "" then
+                hwid = hwid .. "_" .. tostring(execHwid)
             end
         end
     end)
@@ -749,21 +749,6 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                         -- Continuous Catch Touch Trigger on HRP & Catch parts
                         local catchRight = character:FindFirstChild("CatchRight") or character:FindFirstChild("RightHand")
                         local catchLeft = character:FindFirstChild("CatchLeft") or character:FindFirstChild("LeftHand")
-                        
-                        if firetouchinterest then
-                            pcall(function()
-                                firetouchinterest(hrp, v, 0)
-                                firetouchinterest(hrp, v, 1)
-                                if catchRight then
-                                    firetouchinterest(catchRight, v, 0)
-                                    firetouchinterest(catchRight, v, 1)
-                                end
-                                if catchLeft then
-                                    firetouchinterest(catchLeft, v, 0)
-                                    firetouchinterest(catchLeft, v, 1)
-                                end
-                            end)
-                        end
                     end
                 end
             end
@@ -1171,7 +1156,7 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         pagePad.Parent = page
 
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.24, -2, 1, 0)
+        btn.Size = UDim2.new(0.33, -3, 1, 0)
         btn.BackgroundTransparency = 1
         btn.BackgroundColor3 = COLOR_CARD
         btn.Text = name
@@ -1842,7 +1827,6 @@ local function loadMainWaferHub(initialBadgeText, keyData)
             JumpBoost = controls.JumpBoost:GetValue(),
             ClickTackleEnabled = controls.ClickTackleEnabled:GetState(),
             ClickTackleRange = controls.ClickTackleRange:GetValue(),
-            SelectedDevice = getgenv().SelectedDevice or "PC",
             MenuKey = getgenv().MenuKey and getgenv().MenuKey.Name or "LeftControl"
         }
 
@@ -1893,10 +1877,6 @@ local function loadMainWaferHub(initialBadgeText, keyData)
             if cfg.JumpBoost ~= nil then controls.JumpBoost:SetValue(cfg.JumpBoost, true) end
             if cfg.ClickTackleEnabled ~= nil then controls.ClickTackleEnabled:SetState(cfg.ClickTackleEnabled, true) end
             if cfg.ClickTackleRange ~= nil then controls.ClickTackleRange:SetValue(cfg.ClickTackleRange, true) end
-            if cfg.SelectedDevice ~= nil then
-                getgenv().SelectedDevice = cfg.SelectedDevice
-                applyDeviceSpoof(cfg.SelectedDevice)
-            end
             if cfg.MenuKey ~= nil and Enum.KeyCode[cfg.MenuKey] then
                 local k = Enum.KeyCode[cfg.MenuKey]
                 if controls.MenuKey then controls.MenuKey:SetKey(k, true) end
@@ -1907,212 +1887,6 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         else
             configStatus.Text = "Config not found in memory: " .. tostring(selectedConfig)
             configStatus.TextColor3 = COLOR_RED
-        end
-    end)
-
-    local deviceCard = createCard(settingsPage, "Device Changer")
-    
-    getgenv().SelectedDevice = getgenv().SelectedDevice or "PC"
-    
-    local deviceIconMap = {
-        ["PC"] = "rbxasset://textures/ui/PlayerList/PlatformPC.png",
-        ["Mobile"] = "rbxasset://textures/ui/PlayerList/PlatformMobile.png",
-        ["Console"] = "rbxasset://textures/ui/PlayerList/PlatformConsole.png"
-    }
-
-    -- Input Metatable Hook for Platform / Input Spoofing
-    getgenv().SelectedDevice = getgenv().SelectedDevice or "PC"
-    
-    local oldIndex
-    local oldNamecall
-    pcall(function()
-        if hookmetamethod then
-            oldIndex = hookmetamethod(game, "__index", function(self, key)
-                if not checkcaller() then
-                    if getgenv().SelectedDevice == "Mobile" then
-                        if self == UserInputService and (key == "TouchEnabled" or key == "VTouchEnabled") then return true end
-                        if self == UserInputService and key == "GamepadEnabled" then return false end
-                    elseif getgenv().SelectedDevice == "Console" then
-                        if self == UserInputService and key == "GamepadEnabled" then return true end
-                        if self == UserInputService and key == "TouchEnabled" then return false end
-                    end
-                end
-                return oldIndex(self, key)
-            end)
-
-            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-                local method = getnamecallmethod()
-                if not checkcaller() then
-                    if method == "GetPlatform" or method == "getPlatform" then
-                        if getgenv().SelectedDevice == "Mobile" then return Enum.Platform.IOS end
-                        if getgenv().SelectedDevice == "Console" then return Enum.Platform.XBoxOne end
-                        if getgenv().SelectedDevice == "PC" then return Enum.Platform.Windows end
-                    elseif method == "GetLastInputType" or method == "getLastInputType" then
-                        if getgenv().SelectedDevice == "Mobile" then return Enum.UserInputType.Touch end
-                        if getgenv().SelectedDevice == "Console" then return Enum.UserInputType.Gamepad1 end
-                        if getgenv().SelectedDevice == "PC" then return Enum.UserInputType.Keyboard end
-                    elseif method == "IsTenFootInterface" then
-                        if getgenv().SelectedDevice == "Console" then return true end
-                    end
-                end
-                return oldNamecall(self, ...)
-            end)
-        end
-    end)
-
-    local lastBroadcastDevice = nil
-    local cachedTargetImage = nil
-
-    local function broadcastServerDevice(deviceType)
-        if lastBroadcastDevice == deviceType then return end
-        lastBroadcastDevice = deviceType
-
-        pcall(function()
-            local repStorage = game:GetService("ReplicatedStorage")
-            for _, obj in ipairs(repStorage:GetDescendants()) do
-                if obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") then
-                    local n = obj.Name:lower()
-                    if n:find("device") or n:find("platform") or n:find("input") or n:find("hardware") then
-                        pcall(function()
-                            if deviceType == "Console" then
-                                obj:FireServer("Console")
-                                obj:FireServer("Gamepad")
-                                obj:FireServer(Enum.UserInputType.Gamepad1)
-                                obj:FireServer(Enum.Platform.XBoxOne)
-                            elseif deviceType == "Mobile" then
-                                obj:FireServer("Mobile")
-                                obj:FireServer("Touch")
-                                obj:FireServer(Enum.UserInputType.Touch)
-                                obj:FireServer(Enum.Platform.IOS)
-                            elseif deviceType == "PC" then
-                                obj:FireServer("PC")
-                                obj:FireServer("Keyboard")
-                                obj:FireServer(Enum.UserInputType.Keyboard)
-                                obj:FireServer(Enum.Platform.Windows)
-                            end
-                        end)
-                    end
-                end
-            end
-        end)
-
-        pcall(function()
-            player:SetAttribute("Device", deviceType)
-            player:SetAttribute("Platform", deviceType)
-            player:SetAttribute("Input", deviceType == "Console" and "Gamepad" or (deviceType == "Mobile" and "Touch" or "Keyboard"))
-            if player:FindFirstChild("Device") and player.Device:IsA("StringValue") then
-                player.Device.Value = deviceType
-            end
-            if player:FindFirstChild("Platform") and player.Platform:IsA("StringValue") then
-                player.Platform.Value = deviceType
-            end
-        end)
-    end
-
-    local function applyDeviceSpoof(deviceType, isExplicitUserAction)
-        getgenv().SelectedDevice = deviceType
-
-        if isExplicitUserAction then
-            broadcastServerDevice(deviceType)
-            cachedTargetImage = nil
-        end
-
-        local myName = player.Name
-        local myDisplayName = player.DisplayName
-
-        local function scanAndSpoof(parentGui)
-            if not parentGui then return end
-            
-            -- If cached icon target element is still valid and parented, update directly
-            if cachedTargetImage and cachedTargetImage.Parent and cachedTargetImage:IsDescendantOf(parentGui) then
-                pcall(function()
-                    local sampleIcon = (deviceType == "Console" and "rbxassetid://3570695787" or (deviceType == "Mobile" and "rbxassetid://6810222049" or "rbxassetid://6342898511"))
-                    cachedTargetImage.Image = sampleIcon
-                    cachedTargetImage.Visible = true
-                    cachedTargetImage.ImageTransparency = 0
-                end)
-                return
-            end
-
-            -- Locate sample device icon asset from lobby
-            local sampleIcon = nil
-            for _, img in ipairs(parentGui:GetDescendants()) do
-                if (img:IsA("ImageLabel") or img:IsA("ImageButton")) and img.Visible and img.Image ~= "" then
-                    local imgStr = tostring(img.Image):lower()
-                    local imgName = img.Name:lower()
-                    local isBadge = imgStr:find("cross") or imgStr:find("plus") or imgStr:find("medic") or imgStr:find("badge") or imgStr:find("rank") or imgStr:find("headshot") or imgStr:find("avatar") or imgStr:find("rbxthumb") or imgName:find("badge") or imgName:find("health") or imgName:find("cross")
-                    
-                    if not isBadge then
-                        local row = img:FindFirstAncestorOfClass("Frame") or img.Parent
-                        if row then
-                            local rowText = ""
-                            for _, lbl in ipairs(row:GetDescendants()) do
-                                if lbl:IsA("TextLabel") then rowText = rowText .. " " .. lbl.Text end
-                            end
-                            if not rowText:find(myName) and not rowText:find(myDisplayName) then
-                                if deviceType == "Console" and (imgStr:find("console") or imgStr:find("gamepad") or imgStr:find("controller") or imgStr:find("xbox") or imgStr:find("3570695787") or imgStr:find("6342898950")) then
-                                    sampleIcon = img.Image
-                                    break
-                                elseif deviceType == "Mobile" and (imgStr:find("mobile") or imgStr:find("phone") or imgStr:find("touch") or imgStr:find("6810222049") or imgStr:find("6342898711")) then
-                                    sampleIcon = img.Image
-                                    break
-                                elseif deviceType == "PC" and (imgStr:find("pc") or imgStr:find("desktop") or imgStr:find("keyboard") or imgStr:find("monitor") or imgStr:find("6342898511")) then
-                                    sampleIcon = img.Image
-                                    break
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-
-            if not sampleIcon or sampleIcon == "" then
-                if deviceType == "Console" then
-                    sampleIcon = "rbxassetid://3570695787"
-                elseif deviceType == "Mobile" then
-                    sampleIcon = "rbxassetid://6810222049"
-                else
-                    sampleIcon = "rbxassetid://6342898511"
-                end
-            end
-
-            -- Search for local player row and cache target device icon frame
-            for _, lbl in ipairs(parentGui:GetDescendants()) do
-                if lbl:IsA("TextLabel") and (lbl.Text == myName or lbl.Text == myDisplayName or lbl.Text:find(myName)) then
-                    local row = lbl.Parent
-                    if row and row:IsA("GuiObject") then
-                        for _, img in ipairs(row:GetDescendants()) do
-                            if (img:IsA("ImageLabel") or img:IsA("ImageButton")) then
-                                local imgStr = tostring(img.Image):lower()
-                                local imgName = img.Name:lower()
-                                local isBadge = imgStr:find("cross") or imgStr:find("plus") or imgStr:find("medic") or imgStr:find("badge") or imgStr:find("rank") or imgStr:find("headshot") or imgStr:find("avatar") or imgStr:find("rbxthumb") or imgName:find("badge") or imgName:find("health") or imgName:find("cross") or imgName:find("avatar") or imgName:find("head")
-                                
-                                if not isBadge then
-                                    cachedTargetImage = img
-                                    img.Image = sampleIcon
-                                    img.Visible = true
-                                    img.ImageTransparency = 0
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        pcall(function() scanAndSpoof(player:WaitForChild("PlayerGui")) end)
-    end
-
-    controls.DeviceDropdown = addDropdown(deviceCard, "Scoreboard Device", getgenv().SelectedDevice, {"PC", "Mobile", "Console"}, function(selectedDevice)
-        applyDeviceSpoof(selectedDevice, true)
-    end)
-
-    -- Efficient lightweight background maintainer (3.0s interval)
-    task.spawn(function()
-        while task.wait(3.0) do
-            if getgenv().SelectedDevice then
-                applyDeviceSpoof(getgenv().SelectedDevice, false)
-            end
         end
     end)
 
