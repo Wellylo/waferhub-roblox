@@ -754,8 +754,8 @@ local function loadMainWaferHub(initialBadgeText, keyData)
 
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 540, 0, 390)
-    mainFrame.Position = UDim2.new(0.5, -270, 0.5, -195)
+    mainFrame.Size = UDim2.new(0, 540, 0, 500)
+    mainFrame.Position = UDim2.new(0.5, -270, 0.5, -250)
     mainFrame.BackgroundColor3 = COLOR_BG
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
@@ -808,10 +808,73 @@ local function loadMainWaferHub(initialBadgeText, keyData)
 
     local playerInfoFrame = Instance.new("Frame")
     playerInfoFrame.Name = "PlayerInfo"
-    playerInfoFrame.Size = UDim2.new(0, 180, 1, 0)
+    playerInfoFrame.Size = UDim2.new(0, 110, 1, 0)
     playerInfoFrame.Position = UDim2.new(0, 58, 0, 0)
     playerInfoFrame.BackgroundTransparency = 1
     playerInfoFrame.Parent = header
+
+    -- TOP BAR INBETWEEN WAFERHUB LOGO
+    local logoContainer = Instance.new("Frame")
+    logoContainer.Name = "LogoContainer"
+    logoContainer.Size = UDim2.new(0, 145, 0, 32)
+    logoContainer.Position = UDim2.new(0, 172, 0.5, -16)
+    logoContainer.BackgroundTransparency = 1
+    logoContainer.Parent = header
+
+    local logoLoaded = false
+    local getAsset = getcustomasset or getsynasset
+    if writefile and getAsset then
+        pcall(function()
+            if isfile and not isfile("wafer_logo.png") then
+                writefile("wafer_logo.png", base64Decode(WAFER_LOGO_B64))
+            elseif not isfile then
+                writefile("wafer_logo.png", base64Decode(WAFER_LOGO_B64))
+            end
+            local logoImg = Instance.new("ImageLabel")
+            logoImg.Size = UDim2.new(1, 0, 1, 0)
+            logoImg.BackgroundTransparency = 1
+            logoImg.Image = getAsset("wafer_logo.png")
+            logoImg.ScaleType = Enum.ScaleType.Fit
+            logoImg.Parent = logoContainer
+            logoLoaded = true
+        end)
+    end
+
+    if not logoLoaded then
+        -- High-Fidelity Native UI Vector Logo Fallback
+        local waferText = Instance.new("TextLabel")
+        waferText.Size = UDim2.new(0.5, 0, 1, 0)
+        waferText.Position = UDim2.new(0, 0, 0, 0)
+        waferText.BackgroundTransparency = 1
+        waferText.Text = "Wafer"
+        waferText.TextColor3 = Color3.fromRGB(36, 139, 242)
+        waferText.Font = Enum.Font.GothamBold
+        waferText.TextSize = 16
+        waferText.TextXAlignment = Enum.TextXAlignment.Right
+        waferText.Parent = logoContainer
+
+        local hubText = Instance.new("TextLabel")
+        hubText.Size = UDim2.new(0.5, 0, 1, 0)
+        hubText.Position = UDim2.new(0.5, 0, 0, 0)
+        hubText.BackgroundTransparency = 1
+        hubText.Text = "Hub"
+        hubText.TextColor3 = Color3.fromRGB(138, 208, 255)
+        hubText.Font = Enum.Font.GothamBold
+        hubText.TextSize = 16
+        hubText.TextXAlignment = Enum.TextXAlignment.Left
+        hubText.Parent = logoContainer
+
+        local lineBottom = Instance.new("Frame")
+        lineBottom.Size = UDim2.new(0.9, 0, 0, 2)
+        lineBottom.Position = UDim2.new(0.05, 0, 1, -3)
+        lineBottom.BackgroundColor3 = Color3.fromRGB(36, 139, 242)
+        lineBottom.BorderSizePixel = 0
+        lineBottom.Parent = logoContainer
+
+        local lineCorner = Instance.new("UICorner")
+        lineCorner.CornerRadius = UDim.new(1, 0)
+        lineCorner.Parent = lineBottom
+    end
 
     local displayNameLabel = Instance.new("TextLabel")
     displayNameLabel.Size = UDim2.new(1, 0, 0, 20)
@@ -1138,12 +1201,28 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         knobCorner.Parent = knob
 
         local state = defaultState
-        switch.MouseButton1Click:Connect(function()
-            state = not state
+        local function setVisual(newState)
+            state = newState
             TweenService:Create(switch, TweenInfo.new(0.2), {BackgroundColor3 = state and COLOR_ACCENT or Color3.fromRGB(45, 45, 45)}):Play()
             TweenService:Create(knob, TweenInfo.new(0.2), {Position = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)}):Play()
+        end
+
+        switch.MouseButton1Click:Connect(function()
+            setVisual(not state)
             callback(state)
         end)
+
+        local controller = {}
+        function controller:SetState(newState, trigger)
+            setVisual(newState)
+            if trigger ~= false then
+                callback(newState)
+            end
+        end
+        function controller:GetState()
+            return state
+        end
+        return controller
     end
 
     local function addSlider(card, text, min, max, default, callback)
@@ -1195,13 +1274,14 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         fillCorner.CornerRadius = UDim.new(1, 0)
         fillCorner.Parent = fill
 
+        local currentValue = default
         local dragging = false
         local function updateSlider(input)
             local pos = math.clamp((input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-            local value = math.floor(min + (max - min) * pos)
+            currentValue = math.floor(min + (max - min) * pos)
             fill.Size = UDim2.new(pos, 0, 1, 0)
-            valLabel.Text = tostring(value) .. "/" .. tostring(max)
-            callback(value)
+            valLabel.Text = tostring(currentValue) .. "/" .. tostring(max)
+            callback(currentValue)
         end
 
         track.InputBegan:Connect(function(input)
@@ -1220,6 +1300,21 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                 dragging = false
             end
         end)
+
+        local controller = {}
+        function controller:SetValue(val, trigger)
+            currentValue = math.clamp(val, min, max)
+            local pos = (currentValue - min) / (max - min)
+            fill.Size = UDim2.new(pos, 0, 1, 0)
+            valLabel.Text = tostring(currentValue) .. "/" .. tostring(max)
+            if trigger ~= false then
+                callback(currentValue)
+            end
+        end
+        function controller:GetValue()
+            return currentValue
+        end
+        return controller
     end
 
     local function addButton(card, text, callback)
@@ -1243,6 +1338,219 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         btnStroke.Parent = btn
 
         btn.MouseButton1Click:Connect(callback)
+    end
+
+    local function addInput(card, text, placeholder, callback)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 32)
+        row.BackgroundTransparency = 1
+        row.Parent = card
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.45, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = COLOR_TEXT_MAIN
+        label.Font = Enum.Font.GothamMedium
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = row
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(0.55, 0, 1, 0)
+        box.Position = UDim2.new(0.45, 0, 0, 0)
+        box.BackgroundColor3 = COLOR_HEADER
+        box.Text = ""
+        box.PlaceholderText = placeholder or "Config Name..."
+        box.TextColor3 = COLOR_TEXT_MAIN
+        box.PlaceholderColor3 = COLOR_TEXT_MUTED
+        box.Font = Enum.Font.GothamMedium
+        box.TextSize = 12
+        box.ClearTextOnFocus = false
+        box.Parent = row
+
+        local boxCorner = Instance.new("UICorner")
+        boxCorner.CornerRadius = UDim.new(0, 6)
+        boxCorner.Parent = box
+
+        local boxStroke = Instance.new("UIStroke")
+        boxStroke.Color = COLOR_STROKE
+        boxStroke.Thickness = 1
+        boxStroke.Parent = box
+
+        box.FocusLost:Connect(function()
+            callback(box.Text)
+        end)
+        return box
+    end
+
+    local function addDropdown(card, text, defaultOption, options, callback, onDeleteCallback)
+        local containerFrame = Instance.new("Frame")
+        containerFrame.Size = UDim2.new(1, 0, 0, 32)
+        containerFrame.BackgroundTransparency = 1
+        containerFrame.ClipsDescendants = false
+        containerFrame.ZIndex = 5
+        containerFrame.Parent = card
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.4, 0, 0, 32)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = COLOR_TEXT_MAIN
+        label.Font = Enum.Font.GothamMedium
+        label.TextSize = 13
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.ZIndex = 5
+        label.Parent = containerFrame
+
+        local dropHeader = Instance.new("TextButton")
+        dropHeader.Size = UDim2.new(0.6, 0, 0, 32)
+        dropHeader.Position = UDim2.new(0.4, 0, 0, 0)
+        dropHeader.BackgroundColor3 = COLOR_HEADER
+        dropHeader.Text = (defaultOption and defaultOption ~= "") and ("  " .. defaultOption) or "  Select Config..."
+        dropHeader.TextColor3 = COLOR_ACCENT
+        dropHeader.Font = Enum.Font.GothamBold
+        dropHeader.TextSize = 12
+        dropHeader.TextXAlignment = Enum.TextXAlignment.Left
+        dropHeader.AutoButtonColor = false
+        dropHeader.ZIndex = 5
+        dropHeader.Parent = containerFrame
+
+        local headerCorner = Instance.new("UICorner")
+        headerCorner.CornerRadius = UDim.new(0, 6)
+        headerCorner.Parent = dropHeader
+
+        local headerStroke = Instance.new("UIStroke")
+        headerStroke.Color = COLOR_STROKE
+        headerStroke.Thickness = 1
+        headerStroke.Parent = dropHeader
+
+        local arrowLabel = Instance.new("TextLabel")
+        arrowLabel.Size = UDim2.new(0, 20, 1, 0)
+        arrowLabel.Position = UDim2.new(1, -22, 0, 0)
+        arrowLabel.BackgroundTransparency = 1
+        arrowLabel.Text = "▼"
+        arrowLabel.TextColor3 = COLOR_TEXT_MUTED
+        arrowLabel.Font = Enum.Font.GothamBold
+        arrowLabel.TextSize = 10
+        arrowLabel.ZIndex = 6
+        arrowLabel.Parent = dropHeader
+
+        local dropList = Instance.new("ScrollingFrame")
+        dropList.Size = UDim2.new(0.6, 0, 0, 100)
+        dropList.Position = UDim2.new(0.4, 0, 1, 4)
+        dropList.BackgroundColor3 = COLOR_HEADER
+        dropList.BorderSizePixel = 0
+        dropList.Visible = false
+        dropList.ZIndex = 10
+        dropList.ScrollBarThickness = 3
+        dropList.ScrollBarImageColor3 = COLOR_ACCENT
+        dropList.CanvasSize = UDim2.new(0, 0, 0, 0)
+        dropList.Parent = containerFrame
+
+        local listCorner = Instance.new("UICorner")
+        listCorner.CornerRadius = UDim.new(0, 6)
+        listCorner.Parent = dropList
+
+        local listStroke = Instance.new("UIStroke")
+        listStroke.Color = COLOR_STROKE
+        listStroke.Thickness = 1
+        listStroke.Parent = dropList
+
+        local listLayout = Instance.new("UIListLayout")
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        listLayout.Padding = UDim.new(0, 2)
+        listLayout.Parent = dropList
+
+        local selectedValue = defaultOption or ""
+        local currentOptions = options or {}
+
+        local function populateList(opts)
+            for _, child in ipairs(dropList:GetChildren()) do
+                if child:IsA("Frame") or child:IsA("TextButton") then child:Destroy() end
+            end
+            local ySize = 0
+            for _, optName in ipairs(opts) do
+                local itemRow = Instance.new("Frame")
+                itemRow.Size = UDim2.new(1, 0, 0, 24)
+                itemRow.BackgroundTransparency = 1
+                itemRow.ZIndex = 11
+                itemRow.Parent = dropList
+
+                local optBtn = Instance.new("TextButton")
+                optBtn.Size = UDim2.new(1, (onDeleteCallback and -26 or 0), 1, 0)
+                optBtn.Position = UDim2.new(0, 0, 0, 0)
+                optBtn.BackgroundColor3 = COLOR_BG
+                optBtn.BackgroundTransparency = 0.5
+                optBtn.Text = "  " .. optName
+                optBtn.TextColor3 = (optName == selectedValue) and COLOR_ACCENT or COLOR_TEXT_MAIN
+                optBtn.Font = Enum.Font.GothamMedium
+                optBtn.TextSize = 11
+                optBtn.TextXAlignment = Enum.TextXAlignment.Left
+                optBtn.ZIndex = 11
+                optBtn.Parent = itemRow
+
+                optBtn.MouseButton1Click:Connect(function()
+                    selectedValue = optName
+                    dropHeader.Text = "  " .. optName
+                    dropList.Visible = false
+                    arrowLabel.Text = "▼"
+                    callback(optName)
+                    populateList(currentOptions)
+                end)
+
+                if onDeleteCallback then
+                    local delBtn = Instance.new("TextButton")
+                    delBtn.Size = UDim2.new(0, 20, 0, 20)
+                    delBtn.Position = UDim2.new(1, -22, 0.5, -10)
+                    delBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 20)
+                    delBtn.Text = "✕"
+                    delBtn.TextColor3 = COLOR_RED
+                    delBtn.Font = Enum.Font.GothamBold
+                    delBtn.TextSize = 10
+                    delBtn.AutoButtonColor = false
+                    delBtn.ZIndex = 12
+                    delBtn.Parent = itemRow
+
+                    local delCorner = Instance.new("UICorner")
+                    delCorner.CornerRadius = UDim.new(0, 4)
+                    delCorner.Parent = delBtn
+
+                    delBtn.MouseButton1Click:Connect(function()
+                        onDeleteCallback(optName)
+                    end)
+                end
+
+                ySize = ySize + 26
+            end
+            dropList.CanvasSize = UDim2.new(0, 0, 0, ySize)
+        end
+
+        populateList(currentOptions)
+
+        dropHeader.MouseButton1Click:Connect(function()
+            dropList.Visible = not dropList.Visible
+            arrowLabel.Text = dropList.Visible and "▲" or "▼"
+        end)
+
+        local controller = {}
+        function controller:SetOptions(newOpts)
+            currentOptions = newOpts
+            populateList(newOpts)
+            if #newOpts > 0 then
+                if not table.find(newOpts, selectedValue) then
+                    selectedValue = newOpts[1]
+                    dropHeader.Text = "  " .. selectedValue
+                end
+            else
+                selectedValue = ""
+                dropHeader.Text = "  No Configs"
+            end
+        end
+        function controller:GetSelected()
+            return selectedValue
+        end
+        return controller
     end
 
     local function addKeybind(card, text, defaultKey, callback)
@@ -1284,6 +1592,7 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         local listening = false
         local bindingConn
 
+        local currentKey = defaultKey
         keyBtn.MouseButton1Click:Connect(function()
             if listening then return end
             listening = true
@@ -1294,38 +1603,52 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                 if input.UserInputType == Enum.UserInputType.Keyboard then
                     if input.KeyCode ~= Enum.KeyCode.Unknown then
                         listening = false
-                        keyBtn.Text = input.KeyCode.Name
+                        currentKey = input.KeyCode
+                        keyBtn.Text = currentKey.Name
                         keyBtn.TextColor3 = COLOR_ACCENT
                         bindingConn:Disconnect()
-                        callback(input.KeyCode)
+                        callback(currentKey)
                     end
                 end
             end)
         end)
+
+        local controller = {}
+        function controller:SetKey(newKey, trigger)
+            currentKey = newKey
+            keyBtn.Text = newKey and newKey.Name or "None"
+            keyBtn.TextColor3 = COLOR_ACCENT
+            if trigger ~= false then
+                callback(newKey)
+            end
+        end
+        return controller
     end
 
     local mainPage = createTab("Main")
     local physicsPage = createTab("Physics")
     local settingsPage = createTab("Settings")
 
+    local controls = {}
+
     local magCard = createCard(mainPage, "Magnets")
-    addToggle(magCard, "Enable Magnets", false, function(val)
+    controls.MagsActivated = addToggle(magCard, "Enable Magnets", false, function(val)
         getgenv().MagsActivated = val
         if not val then removeHitboxes() end
     end)
-    addToggle(magCard, "Show Visual Hitbox", false, function(val)
+    controls.ShowHitbox = addToggle(magCard, "Show Visual Hitbox", false, function(val)
         getgenv().ShowHitbox = val
         if not val then removeHitboxes() end
     end)
-    addSlider(magCard, "Magnet Distance", 1, 100, 10, function(val)
+    controls.MagsRange = addSlider(magCard, "Magnet Distance", 1, 100, 10, function(val)
         getgenv().MagsRange = val
     end)
-    addSlider(magCard, "Magnet Strength", 1, 100, 50, function(val)
+    controls.MagsStrength = addSlider(magCard, "Magnet Strength", 1, 100, 50, function(val)
         getgenv().MagsStrength = val
     end)
 
     local pullCard = createCard(mainPage, "Pull Vector")
-    addToggle(pullCard, "Enable Pull Vector", false, function(val)
+    controls.PullEnabled = addToggle(pullCard, "Enable Pull Vector", false, function(val)
         getgenv().PullEnabled = val
         pullButton.Visible = val
         if not val then
@@ -1333,39 +1656,182 @@ local function loadMainWaferHub(initialBadgeText, keyData)
             pullButton.BackgroundColor3 = COLOR_ACCENT
         end
     end)
-    addSlider(pullCard, "Pull Power", 1, 25, 10, function(val)
+    controls.PullPower = addSlider(pullCard, "Pull Power", 1, 25, 10, function(val)
         getgenv().PullPower = val
     end)
 
 
     local speedCard = createCard(physicsPage, "CFrame Speed")
-    addToggle(speedCard, "Enable Speed Boost", false, function(val)
+    controls.SpeedEnabled = addToggle(speedCard, "Enable Speed Boost", false, function(val)
         getgenv().SpeedEnabled = val
         if val then startMovementSystem() else stopMovementSystem() end
     end)
-    addSlider(speedCard, "Speed Multiplier", 1, 5, 1, function(val)
+    controls.SpeedValue = addSlider(speedCard, "Speed Multiplier", 1, 5, 1, function(val)
         getgenv().SpeedValue = val
     end)
 
     local jumpCard = createCard(physicsPage, "Jump Power")
-    addToggle(jumpCard, "Enable Jump Boost", false, function(val)
-        getgenv().JumpPowerOn = false
+    controls.JumpPowerOn = addToggle(jumpCard, "Enable Jump Boost", false, function(val)
+        getgenv().JumpPowerOn = val
     end)
-    addSlider(jumpCard, "Jump Boost Power", 50, 120, 50, function(val)
+    controls.JumpBoost = addSlider(jumpCard, "Jump Boost Power", 50, 120, 50, function(val)
         getgenv().JumpBoost = val
     end)
 
     local tackleCard = createCard(physicsPage, "Tackle Controls")
-    addToggle(tackleCard, "Click Tackle Teleport", false, function(val)
+    controls.ClickTackleEnabled = addToggle(tackleCard, "Click Tackle Teleport", false, function(val)
         getgenv().ClickTackleEnabled = val
         if val then enableClickTackle() else disableClickTackle() end
     end)
-    addSlider(tackleCard, "Tackle Range", 1, 30, 15, function(val)
+    controls.ClickTackleRange = addSlider(tackleCard, "Tackle Range", 1, 30, 15, function(val)
         getgenv().ClickTackleRange = val
     end)
 
+    local configCard = createCard(settingsPage, "Configuration Manager")
+    
+    getgenv().WaferHubConfigs = getgenv().WaferHubConfigs or {}
+    if not getgenv().WaferHubConfigs["default"] then
+        getgenv().WaferHubConfigs["default"] = {
+            MagsActivated = false,
+            ShowHitbox = false,
+            MagsRange = 10,
+            MagsStrength = 50,
+            PullEnabled = false,
+            PullPower = 10,
+            SpeedEnabled = false,
+            SpeedValue = 1,
+            JumpPowerOn = false,
+            JumpBoost = 50,
+            ClickTackleEnabled = false,
+            ClickTackleRange = 15,
+            MenuKey = "LeftControl"
+        }
+    end
+
+    local function getSavedConfigNames()
+        local list = {}
+        for k, _ in pairs(getgenv().WaferHubConfigs) do
+            table.insert(list, k)
+        end
+        table.sort(list)
+        return list
+    end
+
+    local configInput = addInput(configCard, "Config Name", "default", function(val) end)
+    
+    local configDropdown
+    local function deleteConfigHandler(targetConfig)
+        if targetConfig and targetConfig ~= "" then
+            getgenv().WaferHubConfigs[targetConfig] = nil
+            local filename = "wafer_cfg_" .. targetConfig .. ".json"
+            if delfile and isfile and isfile(filename) then
+                pcall(function() delfile(filename) end)
+            end
+            local newNames = getSavedConfigNames()
+            configDropdown:SetOptions(newNames)
+            configStatus.Text = "Deleted config: " .. targetConfig
+            configStatus.TextColor3 = COLOR_RED
+        end
+    end
+
+    configDropdown = addDropdown(configCard, "Saved Configs", "default", getSavedConfigNames(), function(selectedName) end, deleteConfigHandler)
+
+    local configStatus = Instance.new("TextLabel")
+    configStatus.Size = UDim2.new(1, 0, 0, 20)
+    configStatus.BackgroundTransparency = 1
+    configStatus.Text = "Status: Ready"
+    configStatus.TextColor3 = COLOR_TEXT_MUTED
+    configStatus.Font = Enum.Font.GothamMedium
+    configStatus.TextSize = 11
+    configStatus.TextXAlignment = Enum.TextXAlignment.Center
+    configStatus.Parent = configCard
+
+    addButton(configCard, "SAVE CONFIGURATION", function()
+        local cName = configInput and configInput.Text or ""
+        if cName == "" then
+            cName = configDropdown:GetSelected()
+        end
+        cName = string.gsub(cName, "[^%w_%-]", "")
+        if cName == "" then cName = "default" end
+
+        local cfgData = {
+            MagsActivated = controls.MagsActivated:GetState(),
+            ShowHitbox = controls.ShowHitbox:GetState(),
+            MagsRange = controls.MagsRange:GetValue(),
+            MagsStrength = controls.MagsStrength:GetValue(),
+            PullEnabled = controls.PullEnabled:GetState(),
+            PullPower = controls.PullPower:GetValue(),
+            SpeedEnabled = controls.SpeedEnabled:GetState(),
+            SpeedValue = controls.SpeedValue:GetValue(),
+            JumpPowerOn = controls.JumpPowerOn:GetState(),
+            JumpBoost = controls.JumpBoost:GetValue(),
+            ClickTackleEnabled = controls.ClickTackleEnabled:GetState(),
+            ClickTackleRange = controls.ClickTackleRange:GetValue(),
+            MenuKey = getgenv().MenuKey and getgenv().MenuKey.Name or "LeftControl"
+        }
+
+        getgenv().WaferHubConfigs[cName] = cfgData
+
+        if writefile then
+            pcall(function()
+                writefile("wafer_cfg_" .. cName .. ".json", HttpService:JSONEncode(cfgData))
+            end)
+        end
+
+        configDropdown:SetOptions(getSavedConfigNames())
+        configStatus.Text = "Saved in-game config: " .. cName
+        configStatus.TextColor3 = COLOR_GREEN
+    end)
+
+    addButton(configCard, "LOAD CONFIGURATION", function()
+        local selectedConfig = configDropdown:GetSelected()
+        if not selectedConfig or selectedConfig == "" then
+            selectedConfig = (configInput and configInput.Text ~= "") and configInput.Text or "default"
+        end
+
+        local cfg = getgenv().WaferHubConfigs[selectedConfig]
+
+        if not cfg and isfile and readfile then
+            local filename = "wafer_cfg_" .. selectedConfig .. ".json"
+            if isfile(filename) then
+                pcall(function()
+                    local content = readfile(filename)
+                    cfg = HttpService:JSONDecode(content)
+                    if type(cfg) == "table" then
+                        getgenv().WaferHubConfigs[selectedConfig] = cfg
+                    end
+                end)
+            end
+        end
+
+        if type(cfg) == "table" then
+            if cfg.MagsActivated ~= nil then controls.MagsActivated:SetState(cfg.MagsActivated, true) end
+            if cfg.ShowHitbox ~= nil then controls.ShowHitbox:SetState(cfg.ShowHitbox, true) end
+            if cfg.MagsRange ~= nil then controls.MagsRange:SetValue(cfg.MagsRange, true) end
+            if cfg.MagsStrength ~= nil then controls.MagsStrength:SetValue(cfg.MagsStrength, true) end
+            if cfg.PullEnabled ~= nil then controls.PullEnabled:SetState(cfg.PullEnabled, true) end
+            if cfg.PullPower ~= nil then controls.PullPower:SetValue(cfg.PullPower, true) end
+            if cfg.SpeedEnabled ~= nil then controls.SpeedEnabled:SetState(cfg.SpeedEnabled, true) end
+            if cfg.SpeedValue ~= nil then controls.SpeedValue:SetValue(cfg.SpeedValue, true) end
+            if cfg.JumpPowerOn ~= nil then controls.JumpPowerOn:SetState(cfg.JumpPowerOn, true) end
+            if cfg.JumpBoost ~= nil then controls.JumpBoost:SetValue(cfg.JumpBoost, true) end
+            if cfg.ClickTackleEnabled ~= nil then controls.ClickTackleEnabled:SetState(cfg.ClickTackleEnabled, true) end
+            if cfg.ClickTackleRange ~= nil then controls.ClickTackleRange:SetValue(cfg.ClickTackleRange, true) end
+            if cfg.MenuKey ~= nil and Enum.KeyCode[cfg.MenuKey] then
+                local k = Enum.KeyCode[cfg.MenuKey]
+                if controls.MenuKey then controls.MenuKey:SetKey(k, true) end
+            end
+
+            configStatus.Text = "Loaded in-game config: " .. selectedConfig
+            configStatus.TextColor3 = COLOR_GREEN
+        else
+            configStatus.Text = "Config not found in memory: " .. tostring(selectedConfig)
+            configStatus.TextColor3 = COLOR_RED
+        end
+    end)
+
     local menuCard = createCard(settingsPage, "Menu Controls")
-    addKeybind(menuCard, "UI Toggle Keybind", getgenv().MenuKey, function(newKey)
+    controls.MenuKey = addKeybind(menuCard, "UI Toggle Keybind", getgenv().MenuKey, function(newKey)
         getgenv().MenuKey = newKey
     end)
     addButton(menuCard, "Unload Wafer Hub Script", function()
