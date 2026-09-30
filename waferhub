@@ -76,6 +76,8 @@ end
 
 local function checkAndBindDevice(cleanKey)
     local currentHWID = getClientHWID()
+    local username = player.Name
+    local userId = player.UserId
     local boundData = {}
     
     if isfile and isfile("wafer_bound_keys.json") then
@@ -90,11 +92,20 @@ local function checkAndBindDevice(cleanKey)
         if keyBinding.hwid and tostring(keyBinding.hwid) ~= currentHWID then
             return false, "Key bound to another device/account!", nil
         end
+        keyBinding.username = username
+        keyBinding.user_id = userId
+        if writefile then
+            pcall(function()
+                writefile("wafer_bound_keys.json", HttpService:JSONEncode(boundData))
+            end)
+        end
         return true, nil, tonumber(keyBinding.activated_at) or os.time()
     else
         local activatedAt = os.time()
         boundData[cleanKey] = {
             hwid = currentHWID,
+            username = username,
+            user_id = userId,
             activated_at = activatedAt
         }
         if writefile then
@@ -159,6 +170,10 @@ local function validateKey(inputKey)
     local isValidSignature = verifyKeyChecksum(cleanKey)
     local allKeys = fetchKeys()
     local keyInfo = allKeys[cleanKey]
+
+    if keyInfo and keyInfo.status == "revoked" then
+        return false, "This Key Has Been Revoked!", "", nil
+    end
 
     if not isValidSignature and not keyInfo then
         return false, "Invalid Key! (Signature verification failed)", "", nil
@@ -599,6 +614,8 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                     if dist <= range or realDist <= range then
                         v.CanCollide = false
                         
+                        -- Prefer CatchRight or CatchLeft touch parts if available to prevent HRP physics recoil/jitter on low-tier executors
+                        local catchPart = character:FindFirstChild("CatchRight") or character:FindFirstChild("CatchLeft") or character:FindFirstChild("RightHand") or character:FindFirstChild("LeftHand") or hrp
                         local targetHandsCFrame = hrp.CFrame * CFrame.new(0, 0.5, -0.8)
                         local strength = getgenv().MagsStrength or 50
                         
@@ -624,19 +641,24 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                             v.CFrame = v.CFrame:Lerp(targetCFrame, lerpAlpha)
                         end
                         
+                        -- Gentle velocity dampening without applying raw forces to HRP
                         local pullDir = (targetHandsCFrame.Position - v.Position)
                         if pullDir.Magnitude > 0.1 then
                             pcall(function()
-                                local curSpeed = math.clamp(ballVel.Magnitude, 15, 45)
-                                v.AssemblyLinearVelocity = ballVel:Lerp(pullDir.Unit * curSpeed, 0.25)
+                                local curSpeed = math.clamp(ballVel.Magnitude, 10, 35)
+                                if v:IsA("BasePart") then
+                                    v.AssemblyLinearVelocity = ballVel:Lerp(pullDir.Unit * curSpeed, 0.15)
+                                end
                             end)
                         end
                         
-                        if firetouchinterest and (not lastTouchFire[v] or (now - lastTouchFire[v]) >= 0.08 or realDist <= 4) then
+                        -- Anti-Shake/Jitter Throttled Touch Interest: Fire touch on catchPart with 0.15s interval or close contact
+                        if firetouchinterest and (not lastTouchFire[v] or (now - lastTouchFire[v]) >= 0.15 or realDist <= 3) then
                             lastTouchFire[v] = now
                             pcall(function()
-                                firetouchinterest(hrp, v, 0)
-                                firetouchinterest(hrp, v, 1)
+                                firetouchinterest(catchPart, v, 0)
+                                task.wait(0.01)
+                                firetouchinterest(catchPart, v, 1)
                             end)
                         end
                     end
