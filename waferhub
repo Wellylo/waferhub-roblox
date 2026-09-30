@@ -74,10 +74,10 @@ local function getClientHWID()
     return hwid
 end
 
-local function checkAndBindDevice(cleanKey)
+local function checkAndBindDevice(cleanKey, keyInfo)
     local currentHWID = getClientHWID()
     local username = player.Name
-    local userId = player.UserId
+    local userId = tostring(player.UserId)
     local boundData = {}
     
     if isfile and isfile("wafer_bound_keys.json") then
@@ -87,10 +87,28 @@ local function checkAndBindDevice(cleanKey)
     end
     if type(boundData) ~= "table" then boundData = {} end
     
+    -- Check if key is bound in keys.json database first
+    if keyInfo and type(keyInfo) == "table" then
+        if keyInfo.hwid and tostring(keyInfo.hwid) ~= "" and tostring(keyInfo.hwid) ~= currentHWID then
+            local boundUser = keyInfo.username or "another user"
+            return false, "This key belongs to @" .. tostring(boundUser) .. "! (Anti-Share Lock)", nil
+        end
+        if keyInfo.user_id and tostring(keyInfo.user_id) ~= "" and tostring(keyInfo.user_id) ~= userId then
+            local boundUser = keyInfo.username or "another user"
+            return false, "This isn't your key! Bound to @" .. tostring(boundUser), nil
+        end
+    end
+    
+    -- Check local workspace binding file
     local keyBinding = boundData[cleanKey]
     if keyBinding and type(keyBinding) == "table" then
         if keyBinding.hwid and tostring(keyBinding.hwid) ~= currentHWID then
-            return false, "Key bound to another device/account!", nil
+            local boundUser = keyBinding.username or "another user"
+            return false, "This isn't your key! Bound to @" .. tostring(boundUser), nil
+        end
+        if keyBinding.user_id and tostring(keyBinding.user_id) ~= userId then
+            local boundUser = keyBinding.username or "another user"
+            return false, "This isn't your key! Bound to @" .. tostring(boundUser), nil
         end
         keyBinding.username = username
         keyBinding.user_id = userId
@@ -113,6 +131,22 @@ local function checkAndBindDevice(cleanKey)
                 writefile("wafer_bound_keys.json", HttpService:JSONEncode(boundData))
             end)
         end
+        
+        -- Save binding to keys.json if writefile available
+        if isfile and isfile("keys.json") and writefile then
+            pcall(function()
+                local kcontent = readfile("keys.json")
+                local kdecoded = HttpService:JSONDecode(kcontent)
+                if kdecoded and kdecoded.keys and kdecoded.keys[cleanKey] then
+                    kdecoded.keys[cleanKey].hwid = currentHWID
+                    kdecoded.keys[cleanKey].username = username
+                    kdecoded.keys[cleanKey].user_id = userId
+                    kdecoded.keys[cleanKey].activated_at = activatedAt
+                    writefile("keys.json", HttpService:JSONEncode(kdecoded))
+                end
+            end)
+        end
+        
         return true, nil, activatedAt
     end
 end
@@ -180,7 +214,7 @@ local function validateKey(inputKey)
     end
 
     -- First-Person Anti-Share Device Lock
-    local isAllowed, lockError, firstActivationTime = checkAndBindDevice(cleanKey)
+    local isAllowed, lockError, firstActivationTime = checkAndBindDevice(cleanKey, keyInfo)
     if not isAllowed then
         return false, lockError, "", nil
     end
@@ -601,7 +635,6 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         
         for _, v in next, workspace:GetChildren() do
             if v.Name == "Football" and v:IsA("BasePart") then
-                local character = player.Character
                 if character and character:FindFirstChild("HumanoidRootPart") then
                     local hrp = character.HumanoidRootPart
                     local range = getgenv().MagsRange or 10
@@ -972,6 +1005,8 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         page.BackgroundTransparency = 1
         page.ScrollBarThickness = 4
         page.ScrollBarImageColor3 = COLOR_ACCENT
+        page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        page.CanvasSize = UDim2.new(0, 0, 0, 0)
         page.Visible = false
         page.Parent = content
 
@@ -1288,6 +1323,7 @@ local function loadMainWaferHub(initialBadgeText, keyData)
     addSlider(pullCard, "Pull Power", 1, 25, 10, function(val)
         getgenv().PullPower = val
     end)
+
 
     local speedCard = createCard(physicsPage, "CFrame Speed")
     addToggle(speedCard, "Enable Speed Boost", false, function(val)
