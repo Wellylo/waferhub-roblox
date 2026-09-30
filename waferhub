@@ -722,6 +722,11 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                 if realDist <= range then
                     v.CanCollide = false
                     
+                    -- Kill incoming ball momentum & spin immediately so physics engine doesn't pop or move the player
+                    pcall(function()
+                        v.AssemblyAngularVelocity = Vector3.zero
+                    end)
+                    
                     -- Dynamic catch snap distance: 2.2 studs (legit) to full radius (high strength)
                     local catchSnapDist = isInstantSnap and range or (2.2 + (s * 3.5))
                     
@@ -729,19 +734,16 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                         -- INSTANT TELEPORT LOCK inside catch radius
                         v.CFrame = targetCatchPos
                         pcall(function()
-                            v.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity
+                            v.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(hrp.AssemblyLinearVelocity.Y, -5, 0), hrp.AssemblyLinearVelocity.Z)
                         end)
                     else
                         -- SMOOTH DYNAMIC LERP for low/medium strength settings
                         local lerpSpeed = math.clamp((3.0 + (s ^ 1.2) * 55) * dt, 0.04, 0.95)
                         v.CFrame = v.CFrame:Lerp(targetCatchPos, lerpSpeed)
                         
+                        -- Match player velocity without pushing ball into player body
                         pcall(function()
-                            local pullDir = (targetCatchPos.Position - v.Position)
-                            if pullDir.Magnitude > 0.1 then
-                                local targetVel = pullDir.Unit * math.clamp(v.AssemblyLinearVelocity.Magnitude, 10, 15 + s * 40) + hrp.AssemblyLinearVelocity
-                                v.AssemblyLinearVelocity = v.AssemblyLinearVelocity:Lerp(targetVel, math.clamp(dt * (10 + s * 30), 0.08, 0.8))
-                            end
+                            v.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, math.clamp(hrp.AssemblyLinearVelocity.Y, -5, 0), hrp.AssemblyLinearVelocity.Z)
                         end)
                     end
                     
