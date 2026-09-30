@@ -687,68 +687,83 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         end
     end
 
-    local orbitAngle = 0
-    local lastTouchFire = {}
-    
+    local fireTouch = firetouchinterest or (syn and syn.firetouchinterest)
+    local catchPartNames = {"CatchRight", "CatchLeft", "RightHand", "LeftHand", "Right Arm", "Left Arm", "HumanoidRootPart"}
+
     RunService.RenderStepped:Connect(function(dt)
         if not getgenv().MagsActivated then return end
         if getgenv().ShowHitbox then footballhitbox() end
         
-        orbitAngle = (orbitAngle + dt * 7) % (math.pi * 2)
-        local now = tick()
-        
         local character = player.Character
+        if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+        local hrp = character.HumanoidRootPart
+        local range = getgenv().MagsRange or 10
+        local strength = getgenv().MagsStrength or 50
+
+        -- Normalize strength ratio (0.01 to 1.0)
+        local s = math.clamp(strength / 100, 0.01, 1.0)
+        local isInstantSnap = (s >= 0.95) -- Max/100 strength = instant radius teleport
+
         for _, v in next, workspace:GetChildren() do
-            if v.Name == "Football" and v:IsA("BasePart") then
-                if character and character:FindFirstChild("HumanoidRootPart") then
-                    local hrp = character.HumanoidRootPart
-                    local range = getgenv().MagsRange or 10
+            if v:IsA("BasePart") and (v.Name == "Football" or v.Name:match("Football")) then
+                local holder = v:FindFirstAncestorOfClass("Model")
+                if holder and Players:GetPlayerFromCharacter(holder) then continue end
+                
+                local targetCatchPos = hrp.CFrame * CFrame.new(0, 0.4, -1.2)
+                local realDist = (v.Position - hrp.Position).Magnitude
+                
+                if realDist <= range then
+                    v.CanCollide = false
                     
-                    local ballVel = v.AssemblyLinearVelocity or v.Velocity or Vector3.zero
-                    local predictedPos = v.Position + (ballVel * 0.04)
-                    local dist = (predictedPos - hrp.Position).Magnitude
-                    local realDist = (v.Position - hrp.Position).Magnitude
+                    -- Snap distance threshold (max strength snaps whole radius, low strength snaps at hands)
+                    local catchSnapDist = isInstantSnap and range or (1.8 + (s * 3.2))
                     
-                    if dist <= range or realDist <= range then
-                        v.CanCollide = false
+                    if isInstantSnap or realDist <= catchSnapDist then
+                        -- INSTANT TELEPORT SNAP at max strength or inside catch snap zone
+                        v.CFrame = targetCatchPos
+                        pcall(function()
+                            v.AssemblyLinearVelocity = hrp.AssemblyLinearVelocity
+                        end)
                         
-                        local targetHandsCFrame = hrp.CFrame * CFrame.new(0, 0.5, -0.8)
-                        local strength = getgenv().MagsStrength or 50
-                        
-                        if strength >= 100 then
-                            v.CFrame = targetHandsCFrame
-                        else
-                            local yDiff = predictedPos.Y - hrp.Position.Y
-                            local dynamicY = math.clamp(yDiff * 0.4, -1.2, 2.2) + 0.4
-                            
-                            local radius = math.clamp(realDist * 0.25, 0.4, 2.2)
-                            local orbitOffset = Vector3.new(
-                                math.cos(orbitAngle) * radius,
-                                dynamicY,
-                                math.sin(orbitAngle) * radius
-                            )
-                            local orbitCFrame = hrp.CFrame * CFrame.new(orbitOffset)
-                            
-                            local strengthFactor = math.clamp(strength / 100, 0.05, 0.99)
-                            local blendWeight = math.clamp((1 - (realDist / range)) * (0.3 + strengthFactor * 0.6), 0.15, 0.95)
-                            local targetCFrame = orbitCFrame:Lerp(targetHandsCFrame, blendWeight)
-                            
-                            local lerpAlpha = math.clamp(dt * (10 + strengthFactor * 30) + (1 - math.clamp(realDist / range, 0, 1)) * (strengthFactor * 0.5), 0.1, 0.95)
-                            v.CFrame = v.CFrame:Lerp(targetCFrame, lerpAlpha)
+                        -- Instant touch interest trigger to complete catch
+                        if fireTouch then
+                            for _, pName in ipairs(catchPartNames) do
+                                local cp = character:FindFirstChild(pName)
+                                if cp then
+                                    pcall(function()
+                                        fireTouch(v, cp, 0)
+                                        fireTouch(v, cp, 1)
+                                    end)
+                                end
+                            end
                         end
+                    else
+                        -- SMOOTH DYNAMIC LERP for lower/medium strength settings
+                        local lerpSpeed = math.clamp((2.5 + (s ^ 1.3) * 50) * dt, 0.03, 0.92)
                         
-                        -- Direct Velocity Vector toward player hands
-                        local pullDir = (targetHandsCFrame.Position - v.Position)
-                        if pullDir.Magnitude > 0.1 then
-                            pcall(function()
-                                local curSpeed = math.clamp(ballVel.Magnitude, 15, 45)
-                                v.AssemblyLinearVelocity = pullDir.Unit * curSpeed
-                            end)
+                        v.CFrame = v.CFrame:Lerp(targetCatchPos, lerpSpeed)
+                        
+                        -- Gentle velocity blending
+                        pcall(function()
+                            local pullDir = (targetCatchPos.Position - v.Position)
+                            if pullDir.Magnitude > 0.1 then
+                                local targetVel = pullDir.Unit * math.clamp(v.AssemblyLinearVelocity.Magnitude, 10, 15 + s * 40) + hrp.AssemblyLinearVelocity
+                                v.AssemblyLinearVelocity = v.AssemblyLinearVelocity:Lerp(targetVel, math.clamp(dt * (8 + s * 25), 0.05, 0.7))
+                            end
+                        end)
+                        
+                        -- Fire touch interest on approach for crisp registration
+                        if realDist <= (catchSnapDist + 2.5) and fireTouch then
+                            for _, pName in ipairs(catchPartNames) do
+                                local cp = character:FindFirstChild(pName)
+                                if cp then
+                                    pcall(function()
+                                        fireTouch(v, cp, 0)
+                                        fireTouch(v, cp, 1)
+                                    end)
+                                end
+                            end
                         end
-                        
-                        -- Continuous Catch Touch Trigger on HRP & Catch parts
-                        local catchRight = character:FindFirstChild("CatchRight") or character:FindFirstChild("RightHand")
-                        local catchLeft = character:FindFirstChild("CatchLeft") or character:FindFirstChild("LeftHand")
                     end
                 end
             end
