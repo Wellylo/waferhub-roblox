@@ -640,6 +640,7 @@ local function loadMainWaferHub(initialBadgeText, keyData)
         orbitAngle = (orbitAngle + dt * 7) % (math.pi * 2)
         local now = tick()
         
+        local character = player.Character
         for _, v in next, workspace:GetChildren() do
             if v.Name == "Football" and v:IsA("BasePart") then
                 if character and character:FindFirstChild("HumanoidRootPart") then
@@ -654,8 +655,6 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                     if dist <= range or realDist <= range then
                         v.CanCollide = false
                         
-                        -- Prefer CatchRight or CatchLeft touch parts if available to prevent HRP physics recoil/jitter on low-tier executors
-                        local catchPart = character:FindFirstChild("CatchRight") or character:FindFirstChild("CatchLeft") or character:FindFirstChild("RightHand") or character:FindFirstChild("LeftHand") or hrp
                         local targetHandsCFrame = hrp.CFrame * CFrame.new(0, 0.5, -0.8)
                         local strength = getgenv().MagsStrength or 50
                         
@@ -681,24 +680,31 @@ local function loadMainWaferHub(initialBadgeText, keyData)
                             v.CFrame = v.CFrame:Lerp(targetCFrame, lerpAlpha)
                         end
                         
-                        -- Gentle velocity dampening without applying raw forces to HRP
+                        -- Direct Velocity Vector toward player hands
                         local pullDir = (targetHandsCFrame.Position - v.Position)
                         if pullDir.Magnitude > 0.1 then
                             pcall(function()
-                                local curSpeed = math.clamp(ballVel.Magnitude, 10, 35)
-                                if v:IsA("BasePart") then
-                                    v.AssemblyLinearVelocity = ballVel:Lerp(pullDir.Unit * curSpeed, 0.15)
-                                end
+                                local curSpeed = math.clamp(ballVel.Magnitude, 15, 45)
+                                v.AssemblyLinearVelocity = pullDir.Unit * curSpeed
                             end)
                         end
                         
-                        -- Anti-Shake/Jitter Throttled Touch Interest: Fire touch on catchPart with 0.15s interval or close contact
-                        if firetouchinterest and (not lastTouchFire[v] or (now - lastTouchFire[v]) >= 0.15 or realDist <= 3) then
-                            lastTouchFire[v] = now
+                        -- Continuous Catch Touch Trigger on HRP & Catch parts
+                        local catchRight = character:FindFirstChild("CatchRight") or character:FindFirstChild("RightHand")
+                        local catchLeft = character:FindFirstChild("CatchLeft") or character:FindFirstChild("LeftHand")
+                        
+                        if firetouchinterest then
                             pcall(function()
-                                firetouchinterest(catchPart, v, 0)
-                                task.wait(0.01)
-                                firetouchinterest(catchPart, v, 1)
+                                firetouchinterest(hrp, v, 0)
+                                firetouchinterest(hrp, v, 1)
+                                if catchRight then
+                                    firetouchinterest(catchRight, v, 0)
+                                    firetouchinterest(catchRight, v, 1)
+                                end
+                                if catchLeft then
+                                    firetouchinterest(catchLeft, v, 0)
+                                    firetouchinterest(catchLeft, v, 1)
+                                end
                             end)
                         end
                     end
