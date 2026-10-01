@@ -297,7 +297,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     local activeKey=verifiedKey or ""
     keyGui:Destroy()
     getgenv().MagsActivated=false; getgenv().MagsRange=10; getgenv().MagsStrength=50
-    getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false; getgenv().SpeedValue=1
+    getgenv().ShowMagRadius=false; getgenv().SpeedEnabled=false; getgenv().SpeedValue=1
     getgenv().JumpPowerOn=false; getgenv().JumpBoost=50; getgenv().PullEnabled=false
     getgenv().PullPower=10; getgenv().ClickTackleEnabled=false; getgenv().ClickTackleRange=15
     getgenv().ClickTackleKey=Enum.KeyCode.X; getgenv().MenuKey=Enum.KeyCode.LeftControl
@@ -313,7 +313,13 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     local addedConn, removedConn
 
     local function isFootball(v)
-        return v:IsA("BasePart") and v.Name:match("Football") and not (v:FindFirstAncestorOfClass("Model") and Players:GetPlayerFromCharacter(v:FindFirstAncestorOfClass("Model")))
+        if not v:IsA("BasePart") or not v.Name:match("Football") then return false end
+        local ancestor=v:FindFirstAncestorOfClass("Model")
+        if not ancestor then return true end -- loose in workspace = the real ball
+        if Players:GetPlayerFromCharacter(ancestor) then return false end -- inside a player
+        if ancestor:FindFirstChildOfClass("Humanoid") then return false end -- inside an NPC
+        if ancestor:FindFirstChildOfClass("AnimationController") then return false end -- NPC bot
+        return false -- inside any model = not the free ball
     end
 
     local function trackExisting()
@@ -340,22 +346,55 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     local pc2=Instance.new("UICorner"); pc2.CornerRadius=UDim.new(1,0); pc2.Parent=pullButton
     local ps2=Instance.new("UIStroke"); ps2.Color=COLOR_SILVER; ps2.Thickness=2; ps2.Parent=pullButton
 
-    local function hitboxx(oid)
-        if not oid or hitboxes[oid] then return end
-        local hitbox=Instance.new("Part"); hitbox.Name="WaferHitbox"
-        hitbox.Size=Vector3.new(getgenv().MagsRange,getgenv().MagsRange,getgenv().MagsRange)
-        hitbox.Anchored=true; hitbox.CanCollide=false; hitbox.Transparency=0.35; hitbox.Material=Enum.Material.ForceField
-        hitbox.Color=Color3.fromRGB(200,200,200); hitbox.CastShadow=false; hitbox.CFrame=oid.CFrame; hitbox.Shape=Enum.PartType.Ball; hitbox.Parent=oid
-        hitboxes[oid]={part=hitbox}
-        local conn; conn=RunService.Heartbeat:Connect(function()
-            if not oid or not oid.Parent or not getgenv().MagsActivated or not getgenv().ShowHitbox then
-                if hitbox then hitbox:Destroy() end; if conn then conn:Disconnect() end; hitboxes[oid]=nil; return
-            end
-            hitbox.CFrame=oid.CFrame; hitbox.Size=Vector3.new(getgenv().MagsRange,getgenv().MagsRange,getgenv().MagsRange)
-        end)
+    -- Clean up any leftover viz parts from previous script runs
+    for _,v in ipairs(workspace:GetDescendants()) do
+        if v:IsA("BasePart") and (v.Name=="WaferRangeViz" or v.Name=="WaferHitbox" or v.Name=="WaferBallViz") then pcall(function() v:Destroy() end) end
     end
+
+    local _ballViz=nil
+    local function updateBallViz()
+        local show = (getgenv().ShowMagRadius or getgenv().ShowHitbox) and getgenv().MagsActivated
+        if not show then
+            if _ballViz then _ballViz:Destroy(); _ballViz=nil end; return
+        end
+        local looseBall = nil
+        for v in pairs(trackedBalls) do
+            if v and v.Parent == workspace then
+                local ancestor = v:FindFirstAncestorOfClass("Model")
+                if not ancestor then
+                    looseBall = v
+                    break
+                end
+            end
+        end
+        if not looseBall then
+            for _, v in ipairs(workspace:GetChildren()) do
+                if v:IsA("BasePart") and (v.Name == "Football" or v.Name:match("Football")) then
+                    looseBall = v
+                    break
+                end
+            end
+        end
+        if not looseBall then
+            if _ballViz then _ballViz:Destroy(); _ballViz=nil end; return
+        end
+        if not _ballViz or not _ballViz.Parent then
+            _ballViz=Instance.new("Part"); _ballViz.Name="WaferBallViz"
+            _ballViz.Anchored=true; _ballViz.CanCollide=false; _ballViz.CanTouch=false
+            _ballViz.Transparency=0.65; _ballViz.Material=Enum.Material.ForceField
+            _ballViz.Color=Color3.fromRGB(240,242,248); _ballViz.CastShadow=false
+            _ballViz.Shape=Enum.PartType.Ball; _ballViz.Parent=workspace
+        end
+        local r=getgenv().MagsRange or 10
+        _ballViz.Size=Vector3.new(r*2,r*2,r*2); _ballViz.CFrame=looseBall.CFrame
+    end
+
     local function removeHitboxes()
-        for oid,data in pairs(hitboxes) do if data.part then data.part:Destroy() end end; hitboxes={}
+        if _ballViz then _ballViz:Destroy(); _ballViz=nil end
+        for _,v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("BasePart") and (v.Name=="WaferRangeViz" or v.Name=="WaferHitbox" or v.Name=="WaferBallViz") then pcall(function() v:Destroy() end) end
+        end
+        hitboxes={}
     end
 
     local function startMovementSystem()
@@ -417,9 +456,10 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
 
     -- Main magnet loop: iterate only the cached ball set, not all descendants
     RunService.RenderStepped:Connect(function(dt)
-        if not getgenv().MagsActivated then return end
+        updateBallViz()
         local char=player.Character; if not char or not char:FindFirstChild("HumanoidRootPart") then return end
         local hrp=char.HumanoidRootPart
+        if not getgenv().MagsActivated then return end
         local range=getgenv().MagsRange or 10
         local strength=getgenv().MagsStrength or 50
         local s=math.clamp(strength/100,0.01,1.0)
@@ -429,10 +469,9 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
 
         for v in pairs(trackedBalls) do
             if not v or not v.Parent then trackedBalls[v]=nil; continue end
-            local holder=v:FindFirstAncestorOfClass("Model")
-            if holder and Players:GetPlayerFromCharacter(holder) then continue end
-            -- show hitbox if needed
-            if getgenv().ShowHitbox then hitboxx(v) end
+            -- Only attract when ball is loose in workspace (not held by anyone)
+            -- Held ball is parented inside a character/model, free ball is direct child of workspace
+            if v.Parent ~= workspace then continue end
             local targetPos=hrp.CFrame*CFrame.new(0,0.4,-1.2)
             local realDist=(v.Position-hrp.Position).Magnitude
             if realDist<=range then
@@ -447,8 +486,6 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
                 if fireTouch then for _,cp in ipairs(charParts) do pcall(function() fireTouch(v,cp,0); fireTouch(v,cp,1) end) end end
             end
         end
-        -- remove stale hitboxes when ShowHitbox is off
-        if not getgenv().ShowHitbox then removeHitboxes() end
     end)
 
     -- Pull loop: only runs when button is actually held
@@ -483,7 +520,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         if addedConn then addedConn:Disconnect() end
         if removedConn then removedConn:Disconnect() end
         trackedBalls={}
-        getgenv().MagsActivated=false; getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false
+        getgenv().MagsActivated=false; getgenv().ShowMagRadius=false; getgenv().SpeedEnabled=false
         getgenv().JumpPowerOn=false; getgenv().PullEnabled=false; getgenv().ClickTackleEnabled=false
         removeHitboxes(); stopMovementSystem(); disableClickTackle()
         if pullButtonGui then pullButtonGui:Destroy() end
@@ -752,7 +789,11 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
             if listening then return end; listening=true; kb.Text="..."; kb.TextColor3=COLOR_TEXT_MUTED
             bindConn=UserInputService.InputBegan:Connect(function(input)
                 if input.UserInputType==Enum.UserInputType.Keyboard and input.KeyCode~=Enum.KeyCode.Unknown then
-                    listening=false; curKey=input.KeyCode; kb.Text=curKey.Name; kb.TextColor3=COLOR_TEXT_MAIN; bindConn:Disconnect(); callback(curKey)
+                    listening=false; curKey=input.KeyCode; kb.Text=curKey.Name; kb.TextColor3=COLOR_TEXT_MAIN
+                    bindConn:Disconnect()
+                    -- defer one frame so the main toggle fires with the OLD key first,
+                    -- preventing the picked key from immediately toggling the UI
+                    task.defer(function() callback(curKey) end)
                 end
             end)
         end)
@@ -766,7 +807,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
 
     local magCard=createCard(mainPage,"Magnets")
     controls.MagsActivated=addToggle(magCard,"Enable Magnets",false,function(val) getgenv().MagsActivated=val; if not val then removeHitboxes() end end)
-    controls.ShowHitbox=addToggle(magCard,"Show Visual Hitbox",false,function(val) getgenv().ShowHitbox=val; if not val then removeHitboxes() end end)
+    controls.ShowMagRadius=addToggle(magCard,"Show Magnet Radius",false,function(val) getgenv().ShowMagRadius=val; if not val then removeHitboxes() end end)
     controls.MagsRange=addSlider(magCard,"Magnet Distance",1,100,10,function(val) getgenv().MagsRange=val end)
     controls.MagsStrength=addSlider(magCard,"Magnet Strength",1,100,50,function(val) getgenv().MagsStrength=val end)
 
@@ -792,7 +833,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     local configCard=createCard(settingsPage,"Configuration Manager")
     getgenv().WaferHubConfigs=getgenv().WaferHubConfigs or {}
     if not getgenv().WaferHubConfigs["default"] then
-        getgenv().WaferHubConfigs["default"]={MagsActivated=false,ShowHitbox=false,MagsRange=10,MagsStrength=50,PullEnabled=false,PullPower=10,SpeedEnabled=false,SpeedValue=1,JumpPowerOn=false,JumpBoost=50,ClickTackleEnabled=false,ClickTackleRange=15,MenuKey="LeftControl"}
+        getgenv().WaferHubConfigs["default"]={MagsActivated=false,ShowMagRadius=false,MagsRange=10,MagsStrength=50,PullEnabled=false,PullPower=10,SpeedEnabled=false,SpeedValue=1,JumpPowerOn=false,JumpBoost=50,ClickTackleEnabled=false,ClickTackleRange=15,MenuKey="LeftControl"}
     end
     local function getSavedConfigNames() local list={}; for k,_ in pairs(getgenv().WaferHubConfigs) do table.insert(list,k) end; table.sort(list); return list end
     local configInput=addInput(configCard,"Config Name","default",function(val) end)
@@ -813,7 +854,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         local cName=configInput and configInput.Text or ""
         if cName=="" then cName=configDropdown:GetSelected() end
         cName=string.gsub(cName,"[^%w_%-]",""); if cName=="" then cName="default" end
-        local cfgData={MagsActivated=controls.MagsActivated:GetState(),ShowHitbox=controls.ShowHitbox:GetState(),MagsRange=controls.MagsRange:GetValue(),MagsStrength=controls.MagsStrength:GetValue(),PullEnabled=controls.PullEnabled:GetState(),PullPower=controls.PullPower:GetValue(),SpeedEnabled=controls.SpeedEnabled:GetState(),SpeedValue=controls.SpeedValue:GetValue(),JumpPowerOn=controls.JumpPowerOn:GetState(),JumpBoost=controls.JumpBoost:GetValue(),ClickTackleEnabled=controls.ClickTackleEnabled:GetState(),ClickTackleRange=controls.ClickTackleRange:GetValue(),MenuKey=getgenv().MenuKey and getgenv().MenuKey.Name or "LeftControl"}
+        local cfgData={MagsActivated=controls.MagsActivated:GetState(),ShowMagRadius=controls.ShowMagRadius:GetState(),MagsRange=controls.MagsRange:GetValue(),MagsStrength=controls.MagsStrength:GetValue(),PullEnabled=controls.PullEnabled:GetState(),PullPower=controls.PullPower:GetValue(),SpeedEnabled=controls.SpeedEnabled:GetState(),SpeedValue=controls.SpeedValue:GetValue(),JumpPowerOn=controls.JumpPowerOn:GetState(),JumpBoost=controls.JumpBoost:GetValue(),ClickTackleEnabled=controls.ClickTackleEnabled:GetState(),ClickTackleRange=controls.ClickTackleRange:GetValue(),MenuKey=getgenv().MenuKey and getgenv().MenuKey.Name or "LeftControl"}
         getgenv().WaferHubConfigs[cName]=cfgData
         if writefile then pcall(function() writefile("wafer_cfg_"..cName..".json",HttpService:JSONEncode(cfgData)) end) end
         configDropdown:SetOptions(getSavedConfigNames()); configStatus.Text="Saved: "..cName; configStatus.TextColor3=COLOR_GREEN
@@ -824,7 +865,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         if not cfg and isfile and readfile then local fn="wafer_cfg_"..sel..".json"; if isfile(fn) then pcall(function() cfg=HttpService:JSONDecode(readfile(fn)); if type(cfg)=="table" then getgenv().WaferHubConfigs[sel]=cfg end end) end end
         if type(cfg)=="table" then
             if cfg.MagsActivated~=nil then controls.MagsActivated:SetState(cfg.MagsActivated,true) end
-            if cfg.ShowHitbox~=nil then controls.ShowHitbox:SetState(cfg.ShowHitbox,true) end
+            if cfg.ShowMagRadius~=nil then controls.ShowMagRadius:SetState(cfg.ShowMagRadius,true) end
             if cfg.MagsRange~=nil then controls.MagsRange:SetValue(cfg.MagsRange,true) end
             if cfg.MagsStrength~=nil then controls.MagsStrength:SetValue(cfg.MagsStrength,true) end
             if cfg.PullEnabled~=nil then controls.PullEnabled:SetState(cfg.PullEnabled,true) end
@@ -841,41 +882,56 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     end)
 
     local menuCard=createCard(settingsPage,"Menu Controls")
-    controls.MenuKey=addKeybind(menuCard,"UI Toggle Keybind",getgenv().MenuKey,function(nk) getgenv().MenuKey=nk end)
+    controls.MenuKey=addKeybind(menuCard,"UI Toggle Keybind",getgenv().MenuKey,function(nk) getgenv().MenuKey=nk; _menuKeyJustSet=true end)
     addButton(menuCard,"Unload Script",function()
         cleanup(); if mainGui then mainGui:Destroy() end
     end)
 
     switchTab(tabs["Main"].Btn,tabs["Main"].Page)
-    UserInputService.InputBegan:Connect(function(input,gpe) if not gpe and input.KeyCode==getgenv().MenuKey then mainFrame.Visible=not mainFrame.Visible end end)
 
-    -- Background revocation checker: re-validates key every 60s against live keys.json
-    -- If the key has been revoked, destroys the GUI immediately
+    -- UI toggle: use a flag so a just-set keybind doesn't immediately fire
+    local _menuKeyJustSet=false
+    UserInputService.InputBegan:Connect(function(input,gpe)
+        if gpe then return end
+        if input.KeyCode==getgenv().MenuKey then
+            if _menuKeyJustSet then _menuKeyJustSet=false; return end
+            mainFrame.Visible=not mainFrame.Visible
+        end
+    end)
+
+    -- Background revocation checker: checks local file every 15s, GitHub every 60s
     if activeKey and activeKey~="" then
         task.spawn(function()
-            while task.wait(60) do
-                local ok,result=pcall(function()
-                    local allKeys=fetchKeys()
-                    local info=allKeys[string.upper(activeKey)]
-                    if info and info.status=="revoked" then return "revoked" end
-                    if (not info) and allKeys and next(allKeys)~=nil then return "revoked" end
-                    return "ok"
+            local tick=0
+            while task.wait(15) do
+                tick=tick+1
+                local revoked=false
+                pcall(function()
+                    -- Fast path: local wafer_revoked_keys.json written by the generator
+                    if isfile and isfile("wafer_revoked_keys.json") then
+                        local rv=HttpService:JSONDecode(readfile("wafer_revoked_keys.json"))
+                        if type(rv)=="table" then
+                            for _,rk in ipairs(rv) do
+                                if string.upper(tostring(rk))==string.upper(activeKey) then revoked=true end
+                            end
+                        end
+                    end
+                    -- Slow path: re-fetch GitHub every 4 ticks (~60s)
+                    if not revoked and tick%4==0 then
+                        local allKeys=fetchKeys()
+                        local info=allKeys[string.upper(activeKey)]
+                        if info and info.status=="revoked" then revoked=true end
+                        if not info and allKeys and next(allKeys)~=nil then revoked=true end
+                    end
                 end)
-                if ok and result=="revoked" then
-                    pcall(function()
-                        if mainGui then mainGui:Destroy() end
-                        cleanup()
-                    end)
-                    -- Show a notification then remove it
-                    local sg=Instance.new("ScreenGui"); sg.Name="RevokeNotify"
-                    sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true
+                if revoked then
+                    pcall(function() if mainGui then mainGui:Destroy() end; cleanup() end)
+                    local sg=Instance.new("ScreenGui"); sg.Name="RevokeNotify"; sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true
                     pcall(function() sg.Parent=game:GetService("CoreGui") end)
-                    local f=Instance.new("Frame",sg)
-                    f.Size=UDim2.new(0,340,0,70); f.Position=UDim2.new(0.5,-170,0,20)
+                    local f=Instance.new("Frame",sg); f.Size=UDim2.new(0,340,0,70); f.Position=UDim2.new(0.5,-170,0,20)
                     f.BackgroundColor3=Color3.fromRGB(235,75,75); f.BorderSizePixel=0
                     Instance.new("UICorner",f).CornerRadius=UDim.new(0,8)
-                    local lbl=Instance.new("TextLabel",f)
-                    lbl.Size=UDim2.new(1,0,1,0); lbl.BackgroundTransparency=1
+                    local lbl=Instance.new("TextLabel",f); lbl.Size=UDim2.new(1,0,1,0); lbl.BackgroundTransparency=1
                     lbl.Text="Your key has been revoked."; lbl.TextColor3=Color3.new(1,1,1)
                     lbl.Font=Enum.Font.GothamBold; lbl.TextSize=16
                     task.delay(5,function() pcall(function() sg:Destroy() end) end)
