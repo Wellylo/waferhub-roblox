@@ -176,6 +176,12 @@ local function validateKey(inputKey)
     else
         if allKeys and next(allKeys)~=nil then return false,"This Key Has Been Revoked / Expired!","",nil end
     end
+    -- Anti-share: if key is locked to a specific user ID, reject everyone else
+    if keyInfo and keyInfo.lock_user_id and tostring(keyInfo.lock_user_id)~="" and tostring(keyInfo.lock_user_id)~="null" then
+        if tostring(keyInfo.lock_user_id)~=tostring(player.UserId) then
+            return false,"This key doesn't belong to you.","",nil
+        end
+    end
     local isAllowed,lockError,firstActivationTime=checkAndBindDevice(cleanKey,keyInfo)
     if not isAllowed then return false,lockError,"",nil end
     local prefix=string.sub(cleanKey,1,5)
@@ -197,7 +203,9 @@ local function validateKey(inputKey)
         return true,"Lifetime Access Granted!","Lifetime Key",{typeName="Lifetime Key",duration=0,activatedAt=firstActivationTime}
     end
     local currentTime=os.time()
-    local activatedAt=firstActivationTime or (keyInfo and tonumber(keyInfo.activated_at)) or currentTime
+    -- created_at in keys.json is the authoritative start: timer begins when YOU generate the key
+    -- falls back to local bound file activation time, then current time as last resort
+    local activatedAt=(keyInfo and tonumber(keyInfo.created_at)) or firstActivationTime or (keyInfo and tonumber(keyInfo.activated_at)) or currentTime
     local expiryTime=activatedAt+duration
     if currentTime>=expiryTime then
         if writefile then pcall(function()
@@ -285,7 +293,8 @@ getKeyBtn.MouseButton1Click:Connect(function()
 end)
 
 -- MAIN HUB
-local function loadMainWaferHub(initialBadgeText,keyData)
+local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
+    local activeKey=verifiedKey or ""
     keyGui:Destroy()
     getgenv().MagsActivated=false; getgenv().MagsRange=10; getgenv().MagsStrength=50
     getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false; getgenv().SpeedValue=1
@@ -293,7 +302,34 @@ local function loadMainWaferHub(initialBadgeText,keyData)
     getgenv().PullPower=10; getgenv().ClickTackleEnabled=false; getgenv().ClickTackleRange=15
     getgenv().ClickTackleKey=Enum.KeyCode.X; getgenv().MenuKey=Enum.KeyCode.LeftControl
 
-    local hitboxes={}; local movementLoop=nil; local pullButtonHeld=false; local clickTackleConnection=nil
+    local hitboxes={}
+    local movementLoop=nil
+    local pullButtonHeld=false
+    local clickTackleConnection=nil
+
+    -- Cache of tracked football parts: [part] = true
+    -- Updated via DescendantAdded/DescendantRemoving instead of scanning every frame
+    local trackedBalls = {}
+    local addedConn, removedConn
+
+    local function isFootball(v)
+        return v:IsA("BasePart") and v.Name:match("Football") and not (v:FindFirstAncestorOfClass("Model") and Players:GetPlayerFromCharacter(v:FindFirstAncestorOfClass("Model")))
+    end
+
+    local function trackExisting()
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if isFootball(v) then trackedBalls[v] = true end
+        end
+    end
+    trackExisting()
+
+    addedConn = workspace.DescendantAdded:Connect(function(v)
+        task.wait() -- let it parent fully
+        if isFootball(v) then trackedBalls[v] = true end
+    end)
+    removedConn = workspace.DescendantRemoving:Connect(function(v)
+        if trackedBalls[v] then trackedBalls[v] = nil end
+    end)
 
     local pullButtonGui=Instance.new("ScreenGui"); pullButtonGui.Name="WaferPullGui"; pullButtonGui.ResetOnSpawn=false; pullButtonGui.Parent=player:WaitForChild("PlayerGui")
     local pullContainer=Instance.new("Frame"); pullContainer.Name="PullContainer"; pullContainer.Size=UDim2.new(0,80,0,80)
@@ -305,9 +341,7 @@ local function loadMainWaferHub(initialBadgeText,keyData)
     local ps2=Instance.new("UIStroke"); ps2.Color=COLOR_SILVER; ps2.Thickness=2; ps2.Parent=pullButton
 
     local function hitboxx(oid)
-        if not oid or hitboxes[oid] or not getgenv().MagsActivated or not getgenv().ShowHitbox then return end
-        local holder=oid:FindFirstAncestorOfClass("Model")
-        if holder and Players:GetPlayerFromCharacter(holder) then return end
+        if not oid or hitboxes[oid] then return end
         local hitbox=Instance.new("Part"); hitbox.Name="WaferHitbox"
         hitbox.Size=Vector3.new(getgenv().MagsRange,getgenv().MagsRange,getgenv().MagsRange)
         hitbox.Anchored=true; hitbox.CanCollide=false; hitbox.Transparency=0.35; hitbox.Material=Enum.Material.ForceField
@@ -317,16 +351,13 @@ local function loadMainWaferHub(initialBadgeText,keyData)
             if not oid or not oid.Parent or not getgenv().MagsActivated or not getgenv().ShowHitbox then
                 if hitbox then hitbox:Destroy() end; if conn then conn:Disconnect() end; hitboxes[oid]=nil; return
             end
-            local h=oid:FindFirstAncestorOfClass("Model")
-            if h and Players:GetPlayerFromCharacter(h) then if hitbox then hitbox:Destroy() end; if conn then conn:Disconnect() end; hitboxes[oid]=nil; return end
             hitbox.CFrame=oid.CFrame; hitbox.Size=Vector3.new(getgenv().MagsRange,getgenv().MagsRange,getgenv().MagsRange)
         end)
     end
-    local function removeHitboxes() for oid,data in pairs(hitboxes) do if data.part then data.part:Destroy() end end; hitboxes={} end
-    local function footballhitbox()
-        if not getgenv().MagsActivated or not getgenv().ShowHitbox then return end
-        for _,child in pairs(workspace:GetChildren()) do if child.Name=="Football" and child:IsA("BasePart") then hitboxx(child) end end
+    local function removeHitboxes()
+        for oid,data in pairs(hitboxes) do if data.part then data.part:Destroy() end end; hitboxes={}
     end
+
     local function startMovementSystem()
         if not movementLoop then
             movementLoop=RunService.Heartbeat:Connect(function(dt)
@@ -338,6 +369,7 @@ local function loadMainWaferHub(initialBadgeText,keyData)
         end
     end
     local function stopMovementSystem() if movementLoop then movementLoop:Disconnect(); movementLoop=nil end end
+
     local function whenmoving(character)
         if not character then return end
         local hum=character:WaitForChild("Humanoid"); local hrp=character:WaitForChild("HumanoidRootPart")
@@ -347,6 +379,7 @@ local function loadMainWaferHub(initialBadgeText,keyData)
             end
         end)
     end
+
     local function findClosestBallCarrier(maxDistance)
         local char=player.Character; if not char then return nil end
         local hrp=char:FindFirstChild("HumanoidRootPart"); if not hrp then return nil end
@@ -363,6 +396,7 @@ local function loadMainWaferHub(initialBadgeText,keyData)
         end
         return closestChar
     end
+
     local function enableClickTackle()
         if clickTackleConnection then return end
         clickTackleConnection=UserInputService.InputBegan:Connect(function(input,gpe)
@@ -378,54 +412,84 @@ local function loadMainWaferHub(initialBadgeText,keyData)
         end)
     end
     local function disableClickTackle() if clickTackleConnection then clickTackleConnection:Disconnect(); clickTackleConnection=nil end end
+
     local fireTouch=firetouchinterest or (syn and syn.firetouchinterest)
 
+    -- Main magnet loop: iterate only the cached ball set, not all descendants
     RunService.RenderStepped:Connect(function(dt)
         if not getgenv().MagsActivated then return end
-        if getgenv().ShowHitbox then footballhitbox() end
         local char=player.Character; if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-        local hrp=char.HumanoidRootPart; local range=getgenv().MagsRange or 10; local strength=getgenv().MagsStrength or 50
-        local s=math.clamp(strength/100,0.01,1.0); local isSnap=(s>=0.90)
-        local charParts={}; for _,p in ipairs(char:GetChildren()) do if p:IsA("BasePart") then table.insert(charParts,p) end end
-        for _,v in next,workspace:GetDescendants() do
-            if v:IsA("BasePart") and v.Name:match("Football") then
-                local holder=v:FindFirstAncestorOfClass("Model")
-                if holder and Players:GetPlayerFromCharacter(holder) then continue end
-                local targetPos=hrp.CFrame*CFrame.new(0,0.4,-1.2); local realDist=(v.Position-hrp.Position).Magnitude
-                if realDist<=range then
-                    v.CanCollide=false; pcall(function() v.AssemblyAngularVelocity=Vector3.zero end)
-                    local snapDist=isSnap and range or (2.2+(s*3.5))
-                    if isSnap or realDist<=snapDist then
-                        v.CFrame=targetPos; pcall(function() v.AssemblyLinearVelocity=Vector3.new(hrp.AssemblyLinearVelocity.X,math.clamp(hrp.AssemblyLinearVelocity.Y,-5,0),hrp.AssemblyLinearVelocity.Z) end)
-                    else
-                        local ls=math.clamp((3.0+(s^1.2)*55)*dt,0.04,0.95)
-                        v.CFrame=v.CFrame:Lerp(targetPos,ls); pcall(function() v.AssemblyLinearVelocity=Vector3.new(hrp.AssemblyLinearVelocity.X,math.clamp(hrp.AssemblyLinearVelocity.Y,-5,0),hrp.AssemblyLinearVelocity.Z) end)
-                    end
-                    if fireTouch then for _,cp in ipairs(charParts) do pcall(function() fireTouch(v,cp,0); fireTouch(v,cp,1) end) end end
+        local hrp=char.HumanoidRootPart
+        local range=getgenv().MagsRange or 10
+        local strength=getgenv().MagsStrength or 50
+        local s=math.clamp(strength/100,0.01,1.0)
+        local isSnap=(s>=0.90)
+        local charParts={}
+        for _,p in ipairs(char:GetChildren()) do if p:IsA("BasePart") then table.insert(charParts,p) end end
+
+        for v in pairs(trackedBalls) do
+            if not v or not v.Parent then trackedBalls[v]=nil; continue end
+            local holder=v:FindFirstAncestorOfClass("Model")
+            if holder and Players:GetPlayerFromCharacter(holder) then continue end
+            -- show hitbox if needed
+            if getgenv().ShowHitbox then hitboxx(v) end
+            local targetPos=hrp.CFrame*CFrame.new(0,0.4,-1.2)
+            local realDist=(v.Position-hrp.Position).Magnitude
+            if realDist<=range then
+                v.CanCollide=false; pcall(function() v.AssemblyAngularVelocity=Vector3.zero end)
+                local snapDist=isSnap and range or (2.2+(s*3.5))
+                if isSnap or realDist<=snapDist then
+                    v.CFrame=targetPos; pcall(function() v.AssemblyLinearVelocity=Vector3.new(hrp.AssemblyLinearVelocity.X,math.clamp(hrp.AssemblyLinearVelocity.Y,-5,0),hrp.AssemblyLinearVelocity.Z) end)
+                else
+                    local ls=math.clamp((3.0+(s^1.2)*55)*dt,0.04,0.95)
+                    v.CFrame=v.CFrame:Lerp(targetPos,ls); pcall(function() v.AssemblyLinearVelocity=Vector3.new(hrp.AssemblyLinearVelocity.X,math.clamp(hrp.AssemblyLinearVelocity.Y,-5,0),hrp.AssemblyLinearVelocity.Z) end)
                 end
+                if fireTouch then for _,cp in ipairs(charParts) do pcall(function() fireTouch(v,cp,0); fireTouch(v,cp,1) end) end end
             end
         end
+        -- remove stale hitboxes when ShowHitbox is off
+        if not getgenv().ShowHitbox then removeHitboxes() end
     end)
 
-    task.spawn(function()
-        while task.wait(0.05) do
-            if getgenv().PullEnabled and pullButtonHeld then
-                local ch=player.Character; if ch and ch:FindFirstChild("HumanoidRootPart") then
-                    local hrp=ch.HumanoidRootPart; local tgt=workspace:FindFirstChild("Football")
-                    if tgt and tgt:IsA("BasePart") then
-                        local diff=tgt.Position-hrp.Position
-                        if diff.Magnitude>0.1 then hrp.Velocity=diff.Unit*(getgenv().PullPower or 10)*5 end
-                    end
+    -- Pull loop: only runs when button is actually held
+    pullButton.MouseButton1Down:Connect(function()
+        if not getgenv().PullEnabled then return end
+        pullButtonHeld=true; pullButton.BackgroundColor3=Color3.fromRGB(30,30,30)
+        while pullButtonHeld and getgenv().PullEnabled do
+            local ch=player.Character
+            if ch and ch:FindFirstChild("HumanoidRootPart") then
+                local hrp=ch.HumanoidRootPart
+                local tgt=workspace:FindFirstChild("Football")
+                if not tgt then
+                    for v in pairs(trackedBalls) do if v and v.Parent then tgt=v; break end end
+                end
+                if tgt and tgt:IsA("BasePart") then
+                    local diff=tgt.Position-hrp.Position
+                    if diff.Magnitude>0.1 then hrp.Velocity=diff.Unit*(getgenv().PullPower or 10)*5 end
                 end
             end
+            task.wait(0.05)
         end
     end)
+    pullButton.MouseButton1Up:Connect(function()
+        pullButtonHeld=false; pullButton.BackgroundColor3=Color3.fromRGB(50,50,50)
+    end)
 
-    pullButton.MouseButton1Down:Connect(function() if getgenv().PullEnabled then pullButtonHeld=true; pullButton.BackgroundColor3=Color3.fromRGB(30,30,30) end end)
-    pullButton.MouseButton1Up:Connect(function() pullButtonHeld=false; pullButton.BackgroundColor3=Color3.fromRGB(50,50,50) end)
     if player.Character then whenmoving(player.Character) end
     player.CharacterAdded:Connect(whenmoving)
 
+    -- cleanup on unload
+    local function cleanup()
+        if addedConn then addedConn:Disconnect() end
+        if removedConn then removedConn:Disconnect() end
+        trackedBalls={}
+        getgenv().MagsActivated=false; getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false
+        getgenv().JumpPowerOn=false; getgenv().PullEnabled=false; getgenv().ClickTackleEnabled=false
+        removeHitboxes(); stopMovementSystem(); disableClickTackle()
+        if pullButtonGui then pullButtonGui:Destroy() end
+    end
+
+    -- MAIN FRAME
     local mainGui=Instance.new("ScreenGui"); mainGui.Name="WaferHubLightGui"; mainGui.ResetOnSpawn=false; mainGui.Parent=player:WaitForChild("PlayerGui")
     local mainFrame=Instance.new("Frame"); mainFrame.Name="MainFrame"; mainFrame.Size=UDim2.new(0,540,0,500)
     mainFrame.Position=UDim2.new(0.5,-270,0.5,-250); mainFrame.BackgroundColor3=COLOR_BG; mainFrame.BorderSizePixel=0
@@ -484,18 +548,7 @@ local function loadMainWaferHub(initialBadgeText,keyData)
             while mainGui and mainGui.Parent do
                 task.wait(1); local now=os.time(); local secLeft=expiryTime-now
                 if secLeft<=0 then
-                    if writefile then pcall(function()
-                        local exp={}
-                        if isfile and isfile("wafer_expired_keys.json") then exp=HttpService:JSONDecode(readfile("wafer_expired_keys.json")) end
-                        if type(exp)~="table" then exp={} end
-                        if keyData and keyData.cleanKey then exp[keyData.cleanKey]={expired_at=os.time(),hwid=getClientHWID()} end
-                        writefile("wafer_expired_keys.json",HttpService:JSONEncode(exp))
-                        if isfile and isfile("wafer_saved_key.txt") then delfile("wafer_saved_key.txt") end
-                    end) end
-                    getgenv().MagsActivated=false; getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false
-                    getgenv().JumpPowerOn=false; getgenv().PullEnabled=false; getgenv().ClickTackleEnabled=false
-                    removeHitboxes(); stopMovementSystem(); disableClickTackle()
-                    if pullButtonGui then pullButtonGui:Destroy() end; if mainGui then mainGui:Destroy() end
+                    cleanup(); if mainGui then mainGui:Destroy() end
                     local ag=Instance.new("ScreenGui"); ag.Name="WaferExpiredAlert"; ag.ResetOnSpawn=false; ag.Parent=player:WaitForChild("PlayerGui")
                     local af=Instance.new("Frame"); af.Size=UDim2.new(0,360,0,180); af.Position=UDim2.new(0.5,-180,0.5,-90)
                     af.BackgroundColor3=COLOR_BG; af.BorderSizePixel=0; af.Active=true; af.Draggable=true; af.Parent=ag
@@ -509,6 +562,14 @@ local function loadMainWaferHub(initialBadgeText,keyData)
                     local cb=Instance.new("TextButton"); cb.Size=UDim2.new(0,120,0,36); cb.Position=UDim2.new(0.5,-60,1,-50)
                     cb.BackgroundColor3=COLOR_HEADER; cb.Text="CLOSE"; cb.TextColor3=COLOR_TEXT_MAIN; cb.Font=Enum.Font.GothamBold; cb.TextSize=12; cb.Parent=af
                     local cbc=Instance.new("UICorner"); cbc.CornerRadius=UDim.new(0,8); cbc.Parent=cb
+                    if writefile then pcall(function()
+                        local exp={}
+                        if isfile and isfile("wafer_expired_keys.json") then exp=HttpService:JSONDecode(readfile("wafer_expired_keys.json")) end
+                        if type(exp)~="table" then exp={} end
+                        if keyData and keyData.cleanKey then exp[keyData.cleanKey]={expired_at=os.time(),hwid=getClientHWID()} end
+                        writefile("wafer_expired_keys.json",HttpService:JSONEncode(exp))
+                        if isfile and isfile("wafer_saved_key.txt") then delfile("wafer_saved_key.txt") end
+                    end) end
                     cb.MouseButton1Click:Connect(function() ag:Destroy() end); break
                 else
                     local d=math.floor(secLeft/86400); local h=math.floor((secLeft%86400)/3600)
@@ -782,13 +843,48 @@ local function loadMainWaferHub(initialBadgeText,keyData)
     local menuCard=createCard(settingsPage,"Menu Controls")
     controls.MenuKey=addKeybind(menuCard,"UI Toggle Keybind",getgenv().MenuKey,function(nk) getgenv().MenuKey=nk end)
     addButton(menuCard,"Unload Script",function()
-        getgenv().MagsActivated=false; getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false; getgenv().JumpPowerOn=false; getgenv().PullEnabled=false; getgenv().ClickTackleEnabled=false
-        removeHitboxes(); stopMovementSystem(); disableClickTackle()
-        if pullButtonGui then pullButtonGui:Destroy() end; if mainGui then mainGui:Destroy() end
+        cleanup(); if mainGui then mainGui:Destroy() end
     end)
 
     switchTab(tabs["Main"].Btn,tabs["Main"].Page)
     UserInputService.InputBegan:Connect(function(input,gpe) if not gpe and input.KeyCode==getgenv().MenuKey then mainFrame.Visible=not mainFrame.Visible end end)
+
+    -- Background revocation checker: re-validates key every 60s against live keys.json
+    -- If the key has been revoked, destroys the GUI immediately
+    if activeKey and activeKey~="" then
+        task.spawn(function()
+            while task.wait(60) do
+                local ok,result=pcall(function()
+                    local allKeys=fetchKeys()
+                    local info=allKeys[string.upper(activeKey)]
+                    if info and info.status=="revoked" then return "revoked" end
+                    if (not info) and allKeys and next(allKeys)~=nil then return "revoked" end
+                    return "ok"
+                end)
+                if ok and result=="revoked" then
+                    pcall(function()
+                        if mainGui then mainGui:Destroy() end
+                        cleanup()
+                    end)
+                    -- Show a notification then remove it
+                    local sg=Instance.new("ScreenGui"); sg.Name="RevokeNotify"
+                    sg.ResetOnSpawn=false; sg.IgnoreGuiInset=true
+                    pcall(function() sg.Parent=game:GetService("CoreGui") end)
+                    local f=Instance.new("Frame",sg)
+                    f.Size=UDim2.new(0,340,0,70); f.Position=UDim2.new(0.5,-170,0,20)
+                    f.BackgroundColor3=Color3.fromRGB(235,75,75); f.BorderSizePixel=0
+                    Instance.new("UICorner",f).CornerRadius=UDim.new(0,8)
+                    local lbl=Instance.new("TextLabel",f)
+                    lbl.Size=UDim2.new(1,0,1,0); lbl.BackgroundTransparency=1
+                    lbl.Text="Your key has been revoked."; lbl.TextColor3=Color3.new(1,1,1)
+                    lbl.Font=Enum.Font.GothamBold; lbl.TextSize=16
+                    task.delay(5,function() pcall(function() sg:Destroy() end) end)
+                    break
+                end
+            end
+        end)
+    end
+
     print("Playful Club Hub loaded!")
 end
 
@@ -801,7 +897,7 @@ local function attemptVerify(inputKeyText)
             else if isfile and isfile("wafer_saved_key.txt") then delfile("wafer_saved_key.txt") end end
         end) end
         statusLabel.Text=message; statusLabel.TextColor3=COLOR_GREEN
-        task.wait(0.5); loadMainWaferHub(badgeText,keyData); return true
+        task.wait(0.5); loadMainWaferHub(badgeText,keyData,cleanKey); return true
     else
         statusLabel.Text=message; statusLabel.TextColor3=COLOR_RED; return false
     end
