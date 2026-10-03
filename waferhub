@@ -300,7 +300,93 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false; getgenv().SpeedValue=1
     getgenv().JumpPowerOn=false; getgenv().JumpBoost=50; getgenv().PullEnabled=false
     getgenv().PullPower=10; getgenv().ClickTackleEnabled=false; getgenv().ClickTackleRange=15
-    getgenv().ClickTackleKey=Enum.KeyCode.X; getgenv().MenuKey=Enum.KeyCode.LeftControl
+    getgenv().AntiTackleEnabled=false; getgenv().TackleHitboxExpand=false; getgenv().TackleHitboxSize=15
+    getgenv().TimeChangerEnabled=false; getgenv().TimeValue=14
+
+    local timeLoop = nil
+    local function startTimeSystem()
+        if not timeLoop then
+            timeLoop = RunService.RenderStepped:Connect(function()
+                if getgenv().TimeChangerEnabled then
+                    pcall(function() game:GetService("Lighting").ClockTime = getgenv().TimeValue or 14 end)
+                end
+            end)
+        end
+    end
+    local function stopTimeSystem()
+        if timeLoop then
+            timeLoop:Disconnect()
+            timeLoop = nil
+        end
+    end
+    startTimeSystem()
+
+    local hitboxLoop = nil
+    local function startHitboxSystem()
+        if not hitboxLoop then
+            hitboxLoop = RunService.Heartbeat:Connect(function()
+                local char = player.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    local hrp = char.HumanoidRootPart
+                    if getgenv().AntiTackleEnabled then
+                        hrp.Size = Vector3.new(0.001, 0.001, 0.001)
+                        pcall(function() hrp.CanTouch = false end)
+                    else
+                        if hrp.Size == Vector3.new(0.001, 0.001, 0.001) then
+                            hrp.Size = Vector3.new(2, 2, 1)
+                            pcall(function() hrp.CanTouch = true end)
+                        end
+                    end
+                end
+
+                if getgenv().TackleHitboxExpand then
+                    local size = getgenv().TackleHitboxSize or 15
+                    for _, plr in ipairs(Players:GetPlayers()) do
+                        if plr ~= player and plr.Character then
+                            local thrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                            if thrp then
+                                thrp.Size = Vector3.new(size, size, size)
+                                thrp.Transparency = 0.75
+                                thrp.CanCollide = false
+                            end
+                        end
+                    end
+                else
+                    for _, plr in ipairs(Players:GetPlayers()) do
+                        if plr ~= player and plr.Character then
+                            local thrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                            if thrp and thrp.Size ~= Vector3.new(2, 2, 1) then
+                                thrp.Size = Vector3.new(2, 2, 1)
+                                thrp.Transparency = 1
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+
+    local function stopHitboxSystem()
+        if hitboxLoop then
+            hitboxLoop:Disconnect()
+            hitboxLoop = nil
+        end
+        local char = player.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            char.HumanoidRootPart.Size = Vector3.new(2, 2, 1)
+            pcall(function() char.HumanoidRootPart.CanTouch = true end)
+        end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= player and plr.Character then
+                local thrp = plr.Character:FindFirstChild("HumanoidRootPart")
+                if thrp then
+                    thrp.Size = Vector3.new(2, 2, 1)
+                    thrp.Transparency = 1
+                end
+            end
+        end
+    end
+    startHitboxSystem()
 
     local hitboxes={}
     local movementLoop=nil
@@ -345,6 +431,12 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         local holder = oid:FindFirstAncestorOfClass("Model")
         if holder and Players:GetPlayerFromCharacter(holder) then return end
         
+        for _, child in ipairs(oid:GetChildren()) do
+            if child:IsA("BasePart") and (child.Name == "Hitbox" or child.Name == "WaferHitbox") then
+                child:Destroy()
+            end
+        end
+
         local hitbox = Instance.new("Part")
         hitbox.Name = "Hitbox"
         hitbox.Size = Vector3.new(getgenv().MagsRange, getgenv().MagsRange, getgenv().MagsRange)
@@ -460,6 +552,8 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         
         if getgenv().ShowHitbox then
             footballhitbox()
+        else
+            removeHitboxes()
         end
         
         local character = player.Character
@@ -470,19 +564,23 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         local s = math.clamp(strength / 100, 0.01, 1.0)
         
         for _, v in next, workspace:GetChildren() do
-            if v.Name == "Football" then
+            if v.Name == "Football" and v:IsA("BasePart") then
                 v.CanCollide = false
                 local dist = (v.Position - hrp.Position).Magnitude
                 
                 if dist <= range then
                     if s >= 0.95 then
                         v.CFrame = hrp.CFrame
+                        firetouchinterest(hrp, v, 0)
+                        firetouchinterest(hrp, v, 0)
                     else
-                        local alpha = math.clamp((3.0 + (s ^ 1.2) * 55) * (dt or 0.016), 0.02, 0.95)
+                        local alpha = math.clamp((1.5 + (s ^ 1.3) * 45) * (dt or 0.016), 0.01, 0.90)
                         v.CFrame = v.CFrame:Lerp(hrp.CFrame, alpha)
+                        if dist <= 3.0 or alpha >= 0.8 then
+                            firetouchinterest(hrp, v, 0)
+                            firetouchinterest(hrp, v, 0)
+                        end
                     end
-                    firetouchinterest(hrp, v, 0)
-                    firetouchinterest(hrp, v, 0)
                 end
             end
         end
@@ -522,7 +620,8 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         trackedBalls={}
         getgenv().MagsActivated=false; getgenv().ShowHitbox=false; getgenv().SpeedEnabled=false
         getgenv().JumpPowerOn=false; getgenv().PullEnabled=false; getgenv().ClickTackleEnabled=false
-        removeHitboxes(); stopMovementSystem(); disableClickTackle()
+        getgenv().AntiTackleEnabled=false; getgenv().TackleHitboxExpand=false; getgenv().TimeChangerEnabled=false
+        removeHitboxes(); stopMovementSystem(); disableClickTackle(); stopHitboxSystem(); stopTimeSystem()
         if pullButtonGui then pullButtonGui:Destroy() end
     end
 
@@ -640,7 +739,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         page.AutomaticCanvasSize=Enum.AutomaticSize.Y; page.CanvasSize=UDim2.new(0,0,0,0); page.Visible=false; page.ZIndex=3; page.Parent=content
         local pl=Instance.new("UIListLayout"); pl.Padding=UDim.new(0,12); pl.SortOrder=Enum.SortOrder.LayoutOrder; pl.Parent=page
         local pp=Instance.new("UIPadding"); pp.PaddingRight=UDim.new(0,6); pp.Parent=page
-        local btn=Instance.new("TextButton"); btn.Size=UDim2.new(0.33,-3,1,0); btn.BackgroundTransparency=1; btn.BackgroundColor3=COLOR_CARD
+        local btn=Instance.new("TextButton"); btn.Size=UDim2.new(0.25,-3,1,0); btn.BackgroundTransparency=1; btn.BackgroundColor3=COLOR_CARD
         btn.Text=name; btn.TextColor3=COLOR_TEXT_MUTED; btn.Font=Enum.Font.GothamBold; btn.TextSize=13; btn.AutoButtonColor=false; btn.ZIndex=4; btn.Parent=navBar
         local bc=Instance.new("UICorner"); bc.CornerRadius=UDim.new(0,8); bc.Parent=btn
         btn.MouseButton1Click:Connect(function() switchTab(btn,page) end)
@@ -798,7 +897,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         return ctrl
     end
 
-    local mainPage=createTab("Main"); local physicsPage=createTab("Physics"); local settingsPage=createTab("Settings")
+    local mainPage=createTab("Main"); local physicsPage=createTab("Physics"); local settingsPage=createTab("Settings"); local miscPage=createTab("Misc")
     local controls={}
 
     local magCard=createCard(mainPage,"Magnets")
@@ -826,10 +925,29 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     controls.ClickTackleEnabled=addToggle(tackleCard,"Click Tackle Teleport",false,function(val) getgenv().ClickTackleEnabled=val; if val then enableClickTackle() else disableClickTackle() end end)
     controls.ClickTackleRange=addSlider(tackleCard,"Tackle Range",1,30,15,function(val) getgenv().ClickTackleRange=val end)
 
+    local hitboxCard=createCard(physicsPage,"Hitbox Changer & Anti-Tackle")
+    controls.AntiTackleEnabled=addToggle(hitboxCard,"Enable Anti-Tackle (No Self Hitbox)",false,function(val) getgenv().AntiTackleEnabled=val end)
+    controls.TackleHitboxExpand=addToggle(hitboxCard,"Expand Opponent Hitboxes",false,function(val) getgenv().TackleHitboxExpand=val end)
+    controls.TackleHitboxSize=addSlider(hitboxCard,"Opponent Hitbox Size",1,50,15,function(val) getgenv().TackleHitboxSize=val end)
+
+    local timeCard=createCard(miscPage,"Time & Lighting Changer")
+    controls.TimeChangerEnabled=addToggle(timeCard,"Enable Custom Time",false,function(val)
+        getgenv().TimeChangerEnabled=val
+        if val then pcall(function() game:GetService("Lighting").ClockTime=getgenv().TimeValue or 14 end) end
+    end)
+    controls.TimeValue=addSlider(timeCard,"Clock Time (0-24 Hrs)",0,24,14,function(val)
+        getgenv().TimeValue=val
+        if getgenv().TimeChangerEnabled then pcall(function() game:GetService("Lighting").ClockTime=val end) end
+    end)
+    addButton(timeCard,"SET DAY (14:00)",function() controls.TimeValue:SetValue(14,true) end)
+    addButton(timeCard,"SET NIGHT (00:00)",function() controls.TimeValue:SetValue(0,true) end)
+    addButton(timeCard,"SET SUNSET (18:00)",function() controls.TimeValue:SetValue(18,true) end)
+    addButton(timeCard,"SET SUNRISE (06:00)",function() controls.TimeValue:SetValue(6,true) end)
+
     local configCard=createCard(settingsPage,"Configuration Manager")
     getgenv().WaferHubConfigs=getgenv().WaferHubConfigs or {}
     if not getgenv().WaferHubConfigs["default"] then
-        getgenv().WaferHubConfigs["default"]={MagsActivated=false,ShowHitbox=false,MagsRange=10,MagsStrength=50,PullEnabled=false,PullPower=10,SpeedEnabled=false,SpeedValue=1,JumpPowerOn=false,JumpBoost=50,ClickTackleEnabled=false,ClickTackleRange=15,MenuKey="LeftControl"}
+        getgenv().WaferHubConfigs["default"]={MagsActivated=false,ShowHitbox=false,MagsRange=10,MagsStrength=50,PullEnabled=false,PullPower=10,SpeedEnabled=false,SpeedValue=1,JumpPowerOn=false,JumpBoost=50,ClickTackleEnabled=false,ClickTackleRange=15,AntiTackleEnabled=false,TackleHitboxExpand=false,TackleHitboxSize=15,TimeChangerEnabled=false,TimeValue=14,MenuKey="LeftControl"}
     end
     local function getSavedConfigNames() local list={}; for k,_ in pairs(getgenv().WaferHubConfigs) do table.insert(list,k) end; table.sort(list); return list end
     local configInput=addInput(configCard,"Config Name","default",function(val) end)
@@ -850,7 +968,7 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
         local cName=configInput and configInput.Text or ""
         if cName=="" then cName=configDropdown:GetSelected() end
         cName=string.gsub(cName,"[^%w_%-]",""); if cName=="" then cName="default" end
-        local cfgData={MagsActivated=controls.MagsActivated:GetState(),ShowHitbox=controls.ShowHitbox:GetState(),MagsRange=controls.MagsRange:GetValue(),MagsStrength=controls.MagsStrength:GetValue(),PullEnabled=controls.PullEnabled:GetState(),PullPower=controls.PullPower:GetValue(),SpeedEnabled=controls.SpeedEnabled:GetState(),SpeedValue=controls.SpeedValue:GetValue(),JumpPowerOn=controls.JumpPowerOn:GetState(),JumpBoost=controls.JumpBoost:GetValue(),ClickTackleEnabled=controls.ClickTackleEnabled:GetState(),ClickTackleRange=controls.ClickTackleRange:GetValue(),MenuKey=getgenv().MenuKey and getgenv().MenuKey.Name or "LeftControl"}
+        local cfgData={MagsActivated=controls.MagsActivated:GetState(),ShowHitbox=controls.ShowHitbox:GetState(),MagsRange=controls.MagsRange:GetValue(),MagsStrength=controls.MagsStrength:GetValue(),PullEnabled=controls.PullEnabled:GetState(),PullPower=controls.PullPower:GetValue(),SpeedEnabled=controls.SpeedEnabled:GetState(),SpeedValue=controls.SpeedValue:GetValue(),JumpPowerOn=controls.JumpPowerOn:GetState(),JumpBoost=controls.JumpBoost:GetValue(),ClickTackleEnabled=controls.ClickTackleEnabled:GetState(),ClickTackleRange=controls.ClickTackleRange:GetValue(),AntiTackleEnabled=controls.AntiTackleEnabled:GetState(),TackleHitboxExpand=controls.TackleHitboxExpand:GetState(),TackleHitboxSize=controls.TackleHitboxSize:GetValue(),TimeChangerEnabled=controls.TimeChangerEnabled:GetState(),TimeValue=controls.TimeValue:GetValue(),MenuKey=getgenv().MenuKey and getgenv().MenuKey.Name or "LeftControl"}
         getgenv().WaferHubConfigs[cName]=cfgData
         if writefile then pcall(function() writefile("wafer_cfg_"..cName..".json",HttpService:JSONEncode(cfgData)) end) end
         configDropdown:SetOptions(getSavedConfigNames()); configStatus.Text="Saved: "..cName; configStatus.TextColor3=COLOR_GREEN
@@ -872,6 +990,11 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
             if cfg.JumpBoost~=nil then controls.JumpBoost:SetValue(cfg.JumpBoost,true) end
             if cfg.ClickTackleEnabled~=nil then controls.ClickTackleEnabled:SetState(cfg.ClickTackleEnabled,true) end
             if cfg.ClickTackleRange~=nil then controls.ClickTackleRange:SetValue(cfg.ClickTackleRange,true) end
+            if cfg.AntiTackleEnabled~=nil then controls.AntiTackleEnabled:SetState(cfg.AntiTackleEnabled,true) end
+            if cfg.TackleHitboxExpand~=nil then controls.TackleHitboxExpand:SetState(cfg.TackleHitboxExpand,true) end
+            if cfg.TackleHitboxSize~=nil then controls.TackleHitboxSize:SetValue(cfg.TackleHitboxSize,true) end
+            if cfg.TimeChangerEnabled~=nil then controls.TimeChangerEnabled:SetState(cfg.TimeChangerEnabled,true) end
+            if cfg.TimeValue~=nil then controls.TimeValue:SetValue(cfg.TimeValue,true) end
             if cfg.MenuKey~=nil and Enum.KeyCode[cfg.MenuKey] then if controls.MenuKey then controls.MenuKey:SetKey(Enum.KeyCode[cfg.MenuKey],true) end end
             configStatus.Text="Loaded: "..sel; configStatus.TextColor3=COLOR_GREEN
         else configStatus.Text="Config not found: "..tostring(sel); configStatus.TextColor3=COLOR_RED end
