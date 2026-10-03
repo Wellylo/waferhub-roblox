@@ -341,21 +341,61 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
     local ps2=Instance.new("UIStroke"); ps2.Color=COLOR_SILVER; ps2.Thickness=2; ps2.Parent=pullButton
 
     local function hitboxx(oid)
-        if not oid or hitboxes[oid] then return end
-        local hitbox=Instance.new("Part"); hitbox.Name="WaferHitbox"
-        hitbox.Size=Vector3.new(getgenv().MagsRange,getgenv().MagsRange,getgenv().MagsRange)
-        hitbox.Anchored=true; hitbox.CanCollide=false; hitbox.Transparency=0.35; hitbox.Material=Enum.Material.ForceField
-        hitbox.Color=Color3.fromRGB(200,200,200); hitbox.CastShadow=false; hitbox.CFrame=oid.CFrame; hitbox.Shape=Enum.PartType.Ball; hitbox.Parent=oid
-        hitboxes[oid]={part=hitbox}
-        local conn; conn=RunService.Heartbeat:Connect(function()
+        if not oid or hitboxes[oid] or not getgenv().MagsActivated or not getgenv().ShowHitbox then return end
+        local holder = oid:FindFirstAncestorOfClass("Model")
+        if holder and Players:GetPlayerFromCharacter(holder) then return end
+        
+        local hitbox = Instance.new("Part")
+        hitbox.Name = "Hitbox"
+        hitbox.Size = Vector3.new(getgenv().MagsRange, getgenv().MagsRange, getgenv().MagsRange)
+        hitbox.Anchored = true
+        hitbox.CanCollide = false
+        hitbox.Transparency = 0.2
+        hitbox.Material = Enum.Material.ForceField
+        hitbox.Color = Color3.fromRGB(255, 255, 255)
+        hitbox.CastShadow = false
+        hitbox.CFrame = oid.CFrame
+        hitbox.Shape = Enum.PartType.Ball
+        hitbox.Parent = oid
+        
+        hitboxes[oid] = {part = hitbox}
+        
+        local connection
+        connection = RunService.Heartbeat:Connect(function()
             if not oid or not oid.Parent or not getgenv().MagsActivated or not getgenv().ShowHitbox then
-                if hitbox then hitbox:Destroy() end; if conn then conn:Disconnect() end; hitboxes[oid]=nil; return
+                if hitbox then hitbox:Destroy() end
+                if connection then connection:Disconnect() end
+                hitboxes[oid] = nil
+                return
             end
-            hitbox.CFrame=oid.CFrame; hitbox.Size=Vector3.new(getgenv().MagsRange,getgenv().MagsRange,getgenv().MagsRange)
+            
+            local holder = oid:FindFirstAncestorOfClass("Model")
+            if holder and Players:GetPlayerFromCharacter(holder) then
+                if hitbox then hitbox:Destroy() end
+                if connection then connection:Disconnect() end
+                hitboxes[oid] = nil
+                return
+            end
+            
+            hitbox.CFrame = oid.CFrame
+            hitbox.Size = Vector3.new(getgenv().MagsRange, getgenv().MagsRange, getgenv().MagsRange)
         end)
     end
+
     local function removeHitboxes()
-        for oid,data in pairs(hitboxes) do if data.part then data.part:Destroy() end end; hitboxes={}
+        for oid, data in pairs(hitboxes) do
+            if data.part then data.part:Destroy() end
+        end
+        hitboxes = {}
+    end
+
+    local function footballhitbox()
+        if not getgenv().MagsActivated or not getgenv().ShowHitbox then return end
+        for _, child in pairs(workspace:GetChildren()) do
+            if child.Name == "Football" and child:IsA("BasePart") then
+                hitboxx(child)
+            end
+        end
     end
 
     local function startMovementSystem()
@@ -415,40 +455,37 @@ local function loadMainWaferHub(initialBadgeText,keyData,verifiedKey)
 
     local fireTouch=firetouchinterest or (syn and syn.firetouchinterest)
 
-    -- Main magnet loop: iterate only the cached ball set, not all descendants
     RunService.RenderStepped:Connect(function(dt)
         if not getgenv().MagsActivated then return end
-        local char=player.Character; if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-        local hrp=char.HumanoidRootPart
-        local range=getgenv().MagsRange or 10
-        local strength=getgenv().MagsStrength or 50
-        local s=math.clamp(strength/100,0.01,1.0)
-        local isSnap=(s>=0.90)
-        local charParts={}
-        for _,p in ipairs(char:GetChildren()) do if p:IsA("BasePart") then table.insert(charParts,p) end end
-
-        for v in pairs(trackedBalls) do
-            if not v or not v.Parent then trackedBalls[v]=nil; continue end
-            local holder=v:FindFirstAncestorOfClass("Model")
-            if holder and Players:GetPlayerFromCharacter(holder) then continue end
-            -- show hitbox if needed
-            if getgenv().ShowHitbox then hitboxx(v) end
-            local targetPos=hrp.CFrame*CFrame.new(0,0.4,-1.2)
-            local realDist=(v.Position-hrp.Position).Magnitude
-            if realDist<=range then
-                v.CanCollide=false; pcall(function() v.AssemblyAngularVelocity=Vector3.zero end)
-                local snapDist=isSnap and range or (2.2+(s*3.5))
-                if isSnap or realDist<=snapDist then
-                    v.CFrame=targetPos; pcall(function() v.AssemblyLinearVelocity=Vector3.new(hrp.AssemblyLinearVelocity.X,math.clamp(hrp.AssemblyLinearVelocity.Y,-5,0),hrp.AssemblyLinearVelocity.Z) end)
-                else
-                    local ls=math.clamp((3.0+(s^1.2)*55)*dt,0.04,0.95)
-                    v.CFrame=v.CFrame:Lerp(targetPos,ls); pcall(function() v.AssemblyLinearVelocity=Vector3.new(hrp.AssemblyLinearVelocity.X,math.clamp(hrp.AssemblyLinearVelocity.Y,-5,0),hrp.AssemblyLinearVelocity.Z) end)
+        
+        if getgenv().ShowHitbox then
+            footballhitbox()
+        end
+        
+        local character = player.Character
+        if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+        local hrp = character.HumanoidRootPart
+        local range = getgenv().MagsRange or 10
+        local strength = getgenv().MagsStrength or 50
+        local s = math.clamp(strength / 100, 0.01, 1.0)
+        
+        for _, v in next, workspace:GetChildren() do
+            if v.Name == "Football" then
+                v.CanCollide = false
+                local dist = (v.Position - hrp.Position).Magnitude
+                
+                if dist <= range then
+                    if s >= 0.95 then
+                        v.CFrame = hrp.CFrame
+                    else
+                        local alpha = math.clamp((3.0 + (s ^ 1.2) * 55) * (dt or 0.016), 0.02, 0.95)
+                        v.CFrame = v.CFrame:Lerp(hrp.CFrame, alpha)
+                    end
+                    firetouchinterest(hrp, v, 0)
+                    firetouchinterest(hrp, v, 0)
                 end
-                if fireTouch then for _,cp in ipairs(charParts) do pcall(function() fireTouch(v,cp,0); fireTouch(v,cp,1) end) end end
             end
         end
-        -- remove stale hitboxes when ShowHitbox is off
-        if not getgenv().ShowHitbox then removeHitboxes() end
     end)
 
     -- Pull loop: only runs when button is actually held
